@@ -1092,18 +1092,15 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
                     # Plot original as yellow stars
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
-                              label="User-specified plan",
-                              s=300, marker='*', alpha=0.4, edgecolors='black', linewidth=1)
+                              s=700, marker='*', alpha=0.4, edgecolors='black', linewidth=1)
                 elif method == "mcts":
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
-                              label="MOAR",
-                              s=200, alpha=0.4, edgecolors='black', linewidth=1)
+                              s=450, alpha=0.4, edgecolors='black', linewidth=1)
                 elif method == "simple_baseline":
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
-                              label="Simple agent",
-                              s=200, alpha=0.4, edgecolors='black', linewidth=1)
+                              s=450, alpha=0.4, edgecolors='black', linewidth=1)
                 else:
                     # Custom label mapping for methods
                     label_map = {
@@ -1121,8 +1118,7 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
                     
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
-                              label=label,
-                              s=200, alpha=0.4, edgecolors='black', linewidth=1,
+                              s=450, alpha=0.4, edgecolors='black', linewidth=1,
                               marker=marker)
                 
                 # MCTS points are plotted as dots only (no filename labels)
@@ -1203,11 +1199,7 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
         
         # Labels and title
         ax.set_xlabel('Cost ($) - Log Scale', fontsize=28)
-        # For blackvault, show normalized accuracy in y-axis label
-        if dataset == "blackvault" and normalize_factor != 1.0:
-            ax.set_ylabel(f'{accuracy_metric.replace("_", " ").title()} (Normalized)', fontsize=28)
-        else:
-            ax.set_ylabel(f'{accuracy_metric.replace("_", " ").title()}', fontsize=28)
+        ax.set_ylabel(f'{accuracy_metric.replace("_", " ").title()}', fontsize=28)
         # Map dataset names to proper titles
         dataset_titles = {
             'cuad': 'CUAD',
@@ -1227,11 +1219,6 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
         # Add grid
         ax.grid(True, alpha=0.3, linestyle='--')
         ax.grid(True, which='minor', alpha=0.1, linestyle=':')
-        
-        # Add legend with pure transparent white background, adaptive position
-        legend = ax.legend(loc='best', frameon=True, shadow=False, fontsize=20, 
-                          facecolor='white', edgecolor='black')
-        legend.get_frame().set_alpha(0.3)
         
         # Tight layout
         plt.tight_layout()
@@ -1313,6 +1300,125 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
         
     except Exception as e:
         print(f"❌ Error generating test frontier plot: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_dotenv()],
+    volumes={VOLUME_MOUNT_PATH: volume},
+    timeout=60 * 30
+)
+def generate_legend_plot() -> Dict[str, Any]:
+    """
+    Generate a standalone horizontal legend plot with all possible methods and markers.
+    
+    Returns:
+        Dictionary with plot generation status
+    """
+    matplotlib.use('Agg')  # Use non-interactive backend for Modal
+    
+    try:
+        print(f"\n📊 Generating standalone legend plot")
+        
+        # Method colors and styles (matching generate_test_frontier_plot)
+        method_colors = {
+            "original": "#ffd700",           # Gold/Yellow
+            "simple_baseline": "#2ecc71",    # Green
+            "mcts": "#0f1b3c",               # Very dark navy blue
+            "lotus": "#c27cf3",              # Light purple
+            "PZ_direct": "#ff0b50",          # Pink/magenta
+            "PZ_retrieval": "#ff0b50",       # Pink/magenta (same as PZ_direct)
+            "PZ": "#ff0b50",                 # Pink/magenta
+            "LOTUS_d": "#c27cf3",            # Light purple
+            "LOTUS_r&r": "#c27cf3"          # Light purple
+        }
+        
+        # Define all methods with their labels, markers, and sizes
+        methods_info = [
+            {"key": "original", "label": "User-specified plan", "marker": "*", "size": 700},
+            {"key": "mcts", "label": "MOAR", "marker": "o", "size": 450},
+            {"key": "simple_baseline", "label": "Simple agent", "marker": "o", "size": 450},
+            {"key": "PZ_direct", "label": "PZ-d", "marker": "o", "size": 450},
+            {"key": "PZ_retrieval", "label": "PZ-r&r", "marker": "^", "size": 450},
+            {"key": "PZ", "label": "PZ", "marker": "o", "size": 450},
+            {"key": "lotus", "label": "LOTUS", "marker": "o", "size": 450},
+            {"key": "LOTUS_d", "label": "LOTUS-d", "marker": "o", "size": 450},
+            {"key": "LOTUS_r&r", "label": "LOTUS-r&r", "marker": "^", "size": 450},
+        ]
+        
+        # Create a figure with just enough space for the legend
+        fig, ax = plt.subplots(figsize=(14, 1))
+        
+        # Create dummy scatter plots for each method (off the visible area)
+        handles = []
+        for method_info in methods_info:
+            color = method_colors[method_info["key"]]
+            handle = ax.scatter([], [], 
+                              color=color,
+                              label=method_info["label"],
+                              s=method_info["size"],
+                              marker=method_info["marker"],
+                              alpha=0.4,
+                              edgecolors='black',
+                              linewidth=1)
+            handles.append(handle)
+        
+        # Create horizontal legend
+        legend = ax.legend(handles=handles, 
+                          loc='center',
+                          ncol=len(methods_info),
+                          frameon=True,
+                          shadow=False,
+                          fontsize=20,
+                          facecolor='white',
+                          edgecolor='black',
+                          columnspacing=1.5,
+                          handletextpad=0.5)
+        legend.get_frame().set_alpha(0.3)
+        
+        # Remove axes
+        ax.axis('off')
+        
+        # Tight layout
+        plt.tight_layout()
+        
+        # Save the plot
+        base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
+        plot_path = base_output_dir / "legend_plot.pdf"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        
+        # Also try to save to local folder
+        local_plot_path = None
+        try:
+            local_output_dir = Path("/Users/lindseywei/Desktop/moar-graph-final")
+            local_output_dir.mkdir(parents=True, exist_ok=True)
+            local_plot_path = local_output_dir / "legend.pdf"
+            plt.savefig(local_plot_path, dpi=150, bbox_inches='tight')
+            print(f"📈 Legend plot saved to local: {local_plot_path}")
+        except Exception as e:
+            print(f"⚠️  Could not save to local folder: {e}")
+        
+        plt.close()
+        
+        print(f"📈 Legend plot saved to: {plot_path}")
+        
+        # Commit changes to Modal volume
+        volume.commit()
+        
+        return {
+            "success": True,
+            "plot_path": str(plot_path),
+            "local_plot_path": str(local_plot_path) if local_plot_path else None
+        }
+        
+    except Exception as e:
+        print(f"❌ Error generating legend plot: {e}")
         traceback.print_exc()
         return {
             "success": False,
@@ -2242,7 +2348,7 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
 
 
 @app.local_entrypoint()
-def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False):
+def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False, legend_only: bool = False):
     """
     Main entrypoint for running test frontier evaluation.
     
@@ -2252,7 +2358,20 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
         plot_only: If True, only generate the plot without running evaluations
         matrix_only: If True, only generate all three matrices without running evaluations
         tradeoff: If True, only run the top 2 accuracy tradeoff analysis for MCTS across all datasets
+        legend_only: If True, only generate the standalone legend plot
     """
+    if legend_only:
+        # Generate standalone legend plot
+        print(f"\n📊 Generating standalone legend plot...")
+        legend_result = generate_legend_plot.remote()
+        if legend_result["success"]:
+            print(f"✅ Legend plot saved to: {legend_result['plot_path']}")
+            if legend_result.get('local_plot_path'):
+                print(f"✅ Also saved to local: {legend_result['local_plot_path']}")
+        else:
+            print(f"❌ Failed to generate legend: {legend_result.get('error', 'Unknown error')}")
+        return
+    
     if dataset not in DATASETS + ["all"]:
         print(f"❌ Invalid dataset: {dataset}")
         print(f"   Valid options: {', '.join(DATASETS + ['all'])}")
