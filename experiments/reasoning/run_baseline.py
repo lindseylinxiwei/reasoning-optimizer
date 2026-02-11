@@ -120,8 +120,8 @@ def modal_main_baseline(
     iterations: int = 1,
     dataset: str = "cuad",
     ground_truth: str | None = None,
-    original_query_result: Dict[str, Any] | None = None,
 ):
+    # Note: original_query_result cannot be passed via CLI, use programmatic calls instead.
     run_baseline_remote.remote(
         yaml_path=yaml_path,
         data_dir=data_dir,
@@ -132,7 +132,7 @@ def modal_main_baseline(
         experiment_name=experiment_name,
         dataset=dataset,
         ground_truth_path=ground_truth,
-        original_query_result=original_query_result,
+        original_query_result=None,
     )
 
 

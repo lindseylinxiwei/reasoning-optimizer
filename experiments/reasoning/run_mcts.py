@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
 
-from docetl.mcts import MCTS, Node, ParetoFrontier, AccuracyComparator
+from docetl.mcts import MCTS, Node, ParetoFrontier
 from docetl.reasoning_optimizer.directives import (
     DEFAULT_MODEL, DEFAULT_OUTPUT_DIR, ALL_DIRECTIVES
 )
@@ -121,8 +121,10 @@ def modal_main_mcts(
     model: str = DEFAULT_MODEL,
     dataset: str = "cuad",
     ground_truth: str | None = None,
-    original_query_result: Dict[str, Any] | None = None,
+    build_first_layer: bool = False,
 ):
+    # Note: original_query_result cannot be passed via CLI, so it's not included here.
+    # Use programmatic calls to run_mcts_remote if you need to pass original_query_result.
     run_mcts_remote.remote(
         yaml_path=yaml_path,
         dataset_path=dataset_path,
@@ -134,7 +136,8 @@ def modal_main_mcts(
         model=model,
         dataset=dataset,
         ground_truth_path=ground_truth,
-        original_query_result=original_query_result,
+        original_query_result=None,
+        build_first_layer=build_first_layer,
     )
 
 
@@ -188,7 +191,7 @@ def run_mcts_experiment(
     # Initialize MCTS
     print("🚀 Initializing MCTS...")
     
-    # Load sample input data for accuracy comparator from dataset_path
+    # Load sample input data from dataset_path
     with open(dataset_path, 'r') as f:
         dataset_data = json.load(f)
     
@@ -198,8 +201,6 @@ def run_mcts_experiment(
     else:
         sample_input_data = dataset_data
     
-    # Initialize accuracy comparator
-    accuracy_comparator = AccuracyComparator(input_data=sample_input_data, model=model)
     
     # Use all registered rewrite directives from the central registry
     available_actions = set(ALL_DIRECTIVES)
@@ -210,7 +211,6 @@ def run_mcts_experiment(
     # Initialize MCTS
     mcts = MCTS(
         root_yaml_path=yaml_path,
-        accuracy_comparator=accuracy_comparator,
         available_actions=available_actions,
         sample_input=sample_input_data,
         dataset_stats=dataset_stats,

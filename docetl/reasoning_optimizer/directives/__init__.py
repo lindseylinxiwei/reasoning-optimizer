@@ -9,6 +9,15 @@ from .base import (
     AVAILABLE_MODELS,
     DEFAULT_OUTPUT_DIR
 )
+from .agent_utils import (
+    agent_completion,
+    is_together_model,
+    KIMI_K2_MODEL,
+    QWEN2_5_7B_MODEL,
+    TOGETHER_MODELS,
+    TOGETHER_MODEL_COSTS,
+    TOGETHER_DEFAULT_COSTS,
+)
 from .chaining import ChainingDirective
 from .gleaning import GleaningDirective
 from .change_model import ChangeModelDirective

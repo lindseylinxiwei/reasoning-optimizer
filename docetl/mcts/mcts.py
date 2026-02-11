@@ -14,6 +14,11 @@ from docetl.reasoning_optimizer.directives import (
     MULTI_INSTANCE_DIRECTIVES,
     Directive,
 )
+from docetl.reasoning_optimizer.directives.agent_utils import (
+    agent_completion,
+    is_together_model,
+    _extract_json_from_text,
+)
 from docetl.reasoning_optimizer.directives.change_model_cost import (
     ChangeModelCostDirective,
     create_model_specific_directives,
@@ -24,7 +29,6 @@ from docetl.reasoning_optimizer.directives.change_model_cost import (
 )
 from docetl.reasoning_optimizer.op_descriptions import *
 from docetl.utils import extract_output_from_json
-from .acc_comparator import AccuracyComparator
 from .Node import Node
 from .ParetoFrontier import ParetoFrontier
 from .mcts_utils import *
@@ -60,7 +64,6 @@ class MCTS:
     def __init__(
         self,
         root_yaml_path: str,
-        accuracy_comparator: AccuracyComparator,
         available_actions: set[Directive],
         sample_input,
         dataset_stats: str,
@@ -79,7 +82,6 @@ class MCTS:
 
         Args:
             root_yaml_path: Path to the initial YAML configuration file
-            accuracy_comparator: Comparator for evaluating plan accuracy
             available_actions: List of available actions for expansion
             exploration_constant: UCB exploration constant (default: sqrt(2))
             max_iterations: Maximum number of MCTS iterations
@@ -151,7 +153,7 @@ class MCTS:
 
         # Initialize Pareto frontier
         self.pareto_frontier = ParetoFrontier(
-            accuracy_comparator, self.action_rewards, self.action_cost_changes, 
+            self.action_rewards, self.action_cost_changes, 
             self.action_accuracy_changes, dataset_name
         )
 
@@ -731,23 +733,22 @@ class MCTS:
 
         while retry_count < max_retries:
 
-            response = litellm.completion(
+            response, call_cost = agent_completion(
                 model=self.model,
                 messages=messages,
-                api_key=os.environ.get("AZURE_API_KEY"),
-                api_base=os.environ.get("AZURE_API_BASE"),
-                api_version=os.environ.get("AZURE_API_VERSION"),
-                azure=True,
                 response_format=ExpandResponseFormat,
             )
-            call_cost = response._hidden_params["response_cost"]
             with self.tree_lock:
                 print(f"💰 Adding LLM call cost: ${call_cost:.4f} (total before: ${self.total_search_cost:.4f})")
                 self.total_search_cost += call_cost
             reply = response.choices[0].message.content
 
             try:
-                parsed = json.loads(reply)
+                # Handle both direct JSON and text with embedded JSON (for reasoning models)
+                if is_together_model(self.model):
+                    parsed = _extract_json_from_text(reply)
+                else:
+                    parsed = json.loads(reply)
                 directive_name = parsed.get("directive")
                 target_op_list = parsed.get("operators")
                 print(f"Directive: {directive_name}, Target ops: {target_op_list}")

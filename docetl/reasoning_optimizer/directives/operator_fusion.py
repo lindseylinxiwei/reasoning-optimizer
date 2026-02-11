@@ -3,7 +3,6 @@ import os
 from copy import deepcopy
 from typing import Dict, List, Type
 
-from litellm import completion
 from pydantic import BaseModel, Field
 
 from docetl.reasoning_optimizer.instantiate_schemas import (
@@ -11,6 +10,7 @@ from docetl.reasoning_optimizer.instantiate_schemas import (
 )
 
 from .base import MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS, Directive, DirectiveTestCase
+from .agent_utils import agent_completion, is_together_model, _extract_json_from_text
 
 
 class OperatorFusionDirective(Directive):
@@ -173,21 +173,20 @@ class OperatorFusionDirective(Directive):
         )
 
         for _ in range(MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS):
-            resp = completion(
+            resp, call_cost = agent_completion(
                 model=agent_llm,
                 messages=message_history,
-                api_key=os.environ.get("AZURE_API_KEY"),
-                api_base=os.environ.get("AZURE_API_BASE"),
-                api_version=os.environ.get("AZURE_API_VERSION"),
-                azure=True,
                 response_format=OperatorFusionInstantiateSchema,
             )
-            call_cost = resp._hidden_params["response_cost"]
             try:
-                parsed_res = json.loads(resp.choices[0].message.content)
+                content = resp.choices[0].message.content
+                if is_together_model(agent_llm):
+                    parsed_res = _extract_json_from_text(content)
+                else:
+                    parsed_res = json.loads(content)
                 schema = OperatorFusionInstantiateSchema(**parsed_res)
                 message_history.append(
-                    {"role": "assistant", "content": resp.choices[0].message.content}
+                    {"role": "assistant", "content": content}
                 )
                 return schema, message_history, call_cost
             except Exception as err:

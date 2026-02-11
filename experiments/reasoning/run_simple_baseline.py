@@ -852,16 +852,18 @@ def run_simple_baseline_remote(dataset: str, output_dir: str = None, model: str 
 @app.local_entrypoint()
 def modal_main_simple_baseline(dataset: str, experiment_name: str | None = None,
                               output_dir: str | None = None, model: str = DEFAULT_MODEL,
-                              ground_truth: str | None = None,
-                              original_query_result: Dict[str, Any] | None = None):
-    """Modal entrypoint for simple baseline."""
+                              ground_truth: str | None = None):
+    """Modal entrypoint for simple baseline.
+    
+    Note: original_query_result cannot be passed via CLI, use programmatic calls instead.
+    """
     run_simple_baseline_remote.remote(
         dataset=dataset,
         output_dir=output_dir,
         model=model,
         experiment_name=experiment_name,
         ground_truth_path=ground_truth,
-        original_query_result=original_query_result
+        original_query_result=None
     )
 
 def main():

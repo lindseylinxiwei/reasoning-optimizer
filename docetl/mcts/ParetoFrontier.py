@@ -8,7 +8,6 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import threading
 
-from .acc_comparator import AccuracyComparator
 from .Node import Node
 
 sys.path.append("../../experiments/reasoning")
@@ -35,7 +34,6 @@ class ParetoFrontier:
 
     def __init__(
         self,
-        accuracy_comparator: AccuracyComparator,
         action_rewards: Dict[str, float],
         action_cost_changes: Dict[str, float],
         action_accuracy_changes: Dict[str, float],
@@ -45,13 +43,11 @@ class ParetoFrontier:
         Initialize the Pareto Frontier.
 
         Args:
-            accuracy_comparator: Comparator for evaluating plan accuracy
             action_rewards: Reference to MCTS action_rewards dictionary
             action_cost_changes: Reference to MCTS action_cost_changes dictionary
             action_accuracy_changes: Reference to MCTS action_accuracy_changes dictionary
             dataset_name: Name of the dataset being optimized (for evaluation and metric selection)
         """
-        self.accuracy_comparator = accuracy_comparator
         self.dataset_name = dataset_name
 
         # Get evaluation function for this dataset

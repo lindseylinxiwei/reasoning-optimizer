@@ -1,12 +1,363 @@
 import json
 import os
-from typing import Any, Dict, List, Literal, Optional, Tuple
+import re
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 
-from litellm import completion, model_cost
+from litellm import completion as litellm_completion, model_cost
 from pydantic import BaseModel, Field
 from rich import print as rprint
-
+from .base import MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS
 from docetl.operations.utils.llm import count_tokens
+
+
+KIMI_K2_MODEL = "together_ai/moonshotai/Kimi-K2-Thinking"
+QWEN2_5_7B_MODEL = "together_ai/Qwen/Qwen2.5-7B-Instruct-Turbo"
+
+TOGETHER_MODELS = {KIMI_K2_MODEL, QWEN2_5_7B_MODEL}
+
+# Cost per million tokens for Together AI models
+# Reference: https://www.together.ai/pricing
+TOGETHER_MODEL_COSTS = {
+    KIMI_K2_MODEL: {
+        "input_cost_per_token": 0.60 / 1_000_000,  # $0.60 per 1M input tokens
+        "output_cost_per_token": 2.00 / 1_000_000,  # $2.00 per 1M output tokens
+    },
+    QWEN2_5_7B_MODEL: {
+        "input_cost_per_token": 0.30 / 1_000_000,  # $0.30 per 1M input tokens
+        "output_cost_per_token": 0.30 / 1_000_000,  # $0.30 per 1M output tokens
+    },
+}
+
+# Default cost for unknown Together AI models
+TOGETHER_DEFAULT_COSTS = {
+    "input_cost_per_token": 1.00 / 1_000_000,  # $1.00 per 1M input tokens (conservative)
+    "output_cost_per_token": 1.00 / 1_000_000,  # $1.00 per 1M output tokens (conservative)
+}
+
+
+def is_together_model(model: str) -> bool:
+    return model in TOGETHER_MODELS or model.startswith("together_ai/")
+
+
+def _extract_json_from_text(text: str) -> dict:
+    # Try to find JSON in code blocks first
+    code_block_pattern = r'```(?:json)?\s*\n?([\s\S]*?)\n?```'
+    matches = re.findall(code_block_pattern, text)
+    if matches:
+        for match in matches:
+            try:
+                return json.loads(match.strip())
+            except json.JSONDecodeError:
+                continue
+    
+    # Try to find raw JSON object
+    json_pattern = r'\{[\s\S]*\}'
+    matches = re.findall(json_pattern, text)
+    if matches:
+        # Try the largest match first (most likely to be complete)
+        for match in sorted(matches, key=len, reverse=True):
+            try:
+                return json.loads(match)
+            except json.JSONDecodeError:
+                continue
+    
+    # Last resort: try parsing the whole text
+    return json.loads(text)
+
+
+def _normalize_together_model(model: str) -> str:
+    if model.startswith("together_ai/"):
+        return model
+    # Model should already have the prefix
+    raise ValueError(f"Together AI model must start with 'together_ai/' prefix, got: {model}")
+
+
+# Context window limits for Together AI models
+TOGETHER_MODEL_CONTEXT_LIMITS = {
+    KIMI_K2_MODEL: 262144,  # 256K context
+    QWEN2_5_7B_MODEL: 131072,  # 128K context
+}
+TOGETHER_DEFAULT_CONTEXT_LIMIT = 32768
+
+# Minimum output tokens to reserve for response
+MIN_OUTPUT_TOKENS = 1000
+
+
+def _get_together_context_limit(model: str) -> int:
+    """Get the context window limit for a Together AI model."""
+    return TOGETHER_MODEL_CONTEXT_LIMITS.get(model, TOGETHER_DEFAULT_CONTEXT_LIMIT)
+
+
+def _truncate_messages_for_context(
+    messages: List[Dict], 
+    max_input_tokens: int,
+    model: str = "gpt-4.1-mini"
+) -> List[Dict]:
+    """
+    Truncate messages to fit within the input token limit.
+    Preserves system message and latest user message, truncates middle content.
+    
+    Args:
+        messages: List of message dicts
+        max_input_tokens: Maximum tokens allowed for input
+        model: Model for token counting
+    
+    Returns:
+        Truncated list of messages
+    """
+    if not messages:
+        return messages
+    
+    # Calculate current token count
+    total_tokens = sum(estimate_token_count(msg.get("content", ""), model) for msg in messages)
+    
+    if total_tokens <= max_input_tokens:
+        return messages
+    
+    rprint(f"[dim]⚠️ Input too long ({total_tokens} tokens), truncating to fit {max_input_tokens} tokens[/dim]")
+    
+    # Make a copy to avoid modifying original
+    messages = [m.copy() for m in messages]
+    
+    # Keep system message (first) and latest message (last)
+    truncated = []
+    system_msg = None
+    if messages[0].get("role") == "system":
+        system_msg = messages[0]
+        remaining = messages[1:]
+    else:
+        remaining = messages
+    
+    # Always keep the latest message
+    latest_msg = remaining[-1] if remaining else None
+    middle_msgs = remaining[:-1] if remaining else []
+    
+    # Calculate tokens for preserved messages
+    system_tokens = estimate_token_count(system_msg.get("content", ""), model) if system_msg else 0
+    latest_tokens = estimate_token_count(latest_msg.get("content", ""), model) if latest_msg else 0
+    
+    # Available tokens for middle messages
+    available_for_middle = max_input_tokens - system_tokens - latest_tokens - 500  # buffer
+    
+    # Add middle messages from most recent backwards until we hit the limit
+    kept_middle = []
+    current_tokens = 0
+    for msg in reversed(middle_msgs):
+        msg_tokens = estimate_token_count(msg.get("content", ""), model)
+        if current_tokens + msg_tokens <= available_for_middle:
+            kept_middle.insert(0, msg)
+            current_tokens += msg_tokens
+        else:
+            # Try to truncate this message to fit remaining space
+            remaining_space = available_for_middle - current_tokens
+            if remaining_space > 500:  # Only truncate if meaningful space left
+                content = msg.get("content", "")
+                # Estimate chars per token and truncate
+                chars_per_token = len(content) / max(1, msg_tokens)
+                target_chars = int(remaining_space * chars_per_token * 0.9)  # 90% to be safe
+                truncated_content = content[:target_chars] + "\n... [content truncated due to context limit]"
+                truncated_msg = msg.copy()
+                truncated_msg["content"] = truncated_content
+                kept_middle.insert(0, truncated_msg)
+            break
+    
+    # Reconstruct messages
+    if system_msg:
+        truncated.append(system_msg)
+    truncated.extend(kept_middle)
+    if latest_msg:
+        truncated.append(latest_msg)
+    
+    new_total = sum(estimate_token_count(msg.get("content", ""), model) for msg in truncated)
+    rprint(f"[dim]📝 Truncated messages from {total_tokens} to {new_total} tokens ({len(messages)} -> {len(truncated)} messages)[/dim]")
+    
+    return truncated
+
+
+def _together_completion(
+    model: str,
+    messages: List[Dict],
+    response_format: Optional[Type[BaseModel]] = None,
+    temperature: float = 1.0,
+    max_tokens: int = 16000,
+) -> Tuple[Any, float]:
+    """
+    Call Together AI API via litellm for Kimi K2 and other Together models.
+    
+    Note: Kimi K2 does not support response_format for schema enforcement,
+    so we inject the schema into the prompt instead.
+    
+    Returns:
+        Tuple of (response_object, cost)
+    """
+    # Normalize model name to have together_ai/ prefix
+    litellm_model = _normalize_together_model(model)
+    
+    # Make a copy of messages to avoid modifying the original
+    messages = [m.copy() for m in messages]
+    
+    # Add schema instruction to system message if response_format is provided
+    # (Kimi doesn't support native response_format like OpenAI)
+    if response_format is not None:
+        schema_instruction = f"\n\nYou MUST respond with a valid JSON object matching this schema:\n{json.dumps(response_format.model_json_schema(), indent=2)}\n\nDo not include any text before or after the JSON. Only output the JSON object."
+        
+        # Find or create system message
+        has_system = any(m.get("role") == "system" for m in messages)
+        if has_system:
+            for m in messages:
+                if m.get("role") == "system":
+                    m["content"] = m["content"] + schema_instruction
+                    break
+        else:
+            messages.insert(0, {"role": "system", "content": schema_instruction})
+    
+    # Get context limit and calculate token budget
+    context_limit = _get_together_context_limit(model)
+    
+    # Reserve tokens for output (use requested max_tokens but cap at reasonable limit)
+    output_token_budget = min(max_tokens, context_limit // 2)  # At most half the context for output
+    output_token_budget = max(output_token_budget, MIN_OUTPUT_TOKENS)  # At least MIN_OUTPUT_TOKENS
+    
+    # Calculate max input tokens
+    max_input_tokens = context_limit - output_token_budget - 100  # 100 token safety buffer
+    
+    # Truncate messages if input is too long
+    messages = _truncate_messages_for_context(messages, max_input_tokens)
+    
+    # Recalculate actual input tokens after truncation
+    input_tokens = sum(estimate_token_count(msg.get("content", "")) for msg in messages)
+    
+    # Final check: adjust output tokens if still needed
+    available_tokens = context_limit - input_tokens - 100
+    effective_max_tokens = max(MIN_OUTPUT_TOKENS, min(max_tokens, available_tokens))
+    
+    if effective_max_tokens < max_tokens:
+        rprint(f"[dim]⚠️ Setting max_tokens to {effective_max_tokens} ({input_tokens} input tokens, {context_limit} context limit)[/dim]")
+    
+    # Call via litellm (no response_format since Kimi doesn't support it)
+    response = litellm_completion(
+        model=litellm_model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=effective_max_tokens,
+    )
+    
+    # Get token usage from response
+    usage = response.usage
+    input_tokens = usage.prompt_tokens if usage else 0
+    output_tokens = usage.completion_tokens if usage else 0
+    
+    # Get model-specific pricing, fall back to default if not found
+    model_costs = TOGETHER_MODEL_COSTS.get(model, TOGETHER_DEFAULT_COSTS)
+    
+    # Calculate cost using model-specific pricing
+    cost = (
+        input_tokens * model_costs["input_cost_per_token"] +
+        output_tokens * model_costs["output_cost_per_token"]
+    )
+    
+    # Extract model name for display
+    model_display_name = model.split("/")[-1] if "/" in model else model
+    rprint(f"[dim]🤖 Together AI ({model_display_name}) usage: {input_tokens} input, {output_tokens} output tokens, cost: ${cost:.4f}[/dim]")
+    
+    return response, cost
+
+
+def agent_completion(
+    model: str,
+    messages: List[Dict],
+    response_format: Optional[Type[BaseModel]] = None,
+    temperature: Optional[float] = None,
+    max_tokens: int = 16000,
+    **kwargs
+) -> Tuple[Any, float]:
+    """
+    Unified completion function that routes to appropriate backend.
+    
+    For Kimi K2 / Together AI models: Uses litellm with together_ai/ prefix.
+    For other models: Uses litellm with Azure.
+    
+    Args:
+        model: Model identifier.
+               For Together AI: "together_ai/moonshotai/Kimi-K2-Thinking"
+               For Azure: "gpt-4.1", "gpt-4o", etc.
+        messages: List of message dicts with role and content
+        response_format: Optional Pydantic model for structured output
+                        (injected into prompt for Kimi since it doesn't support native schema)
+        temperature: Temperature for sampling (default: None for Azure, 1.0 for Kimi)
+        max_tokens: Maximum tokens in response
+        **kwargs: Additional arguments passed to litellm
+    
+    Returns:
+        Tuple of (response_object, cost) where response_object has .choices[0].message.content
+    """
+    if is_together_model(model):
+        # Use Together AI via litellm for Kimi K2
+        temp = temperature if temperature is not None else 1.0
+        response, cost = _together_completion(
+            model=model,
+            messages=messages,
+            response_format=response_format,
+            temperature=temp,
+            max_tokens=max_tokens,
+        )
+        
+        # Add cost to response's hidden params for consistency
+        if not hasattr(response, '_hidden_params'):
+            response._hidden_params = {}
+        response._hidden_params["response_cost"] = cost
+        
+        return response, cost
+    
+    else:
+        # Use litellm for Azure/OpenAI models
+        litellm_kwargs = {
+            "model": model,
+            "messages": messages,
+            "api_key": os.environ.get("AZURE_API_KEY"),
+            "api_base": os.environ.get("AZURE_API_BASE"),
+            "api_version": os.environ.get("AZURE_API_VERSION"),
+            "azure": True,
+        }
+        
+        if response_format is not None:
+            litellm_kwargs["response_format"] = response_format
+        
+        if temperature is not None:
+            litellm_kwargs["temperature"] = temperature
+            
+        # Add any additional kwargs
+        litellm_kwargs.update(kwargs)
+        
+        response = litellm_completion(**litellm_kwargs)
+        cost = response._hidden_params.get("response_cost", 0.0)
+        
+        return response, cost
+
+
+def parse_response_content(response, response_format: Optional[Type[BaseModel]] = None):
+    """
+    Parse response content, handling both litellm and Together AI responses.
+    
+    Args:
+        response: Response object from agent_completion
+        response_format: Optional Pydantic model to validate against
+    
+    Returns:
+        Parsed dict or Pydantic model instance
+    """
+    content = response.choices[0].message.content
+    
+    # Try to extract JSON from the content
+    try:
+        parsed = _extract_json_from_text(content)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ValueError(f"Failed to parse JSON from response: {e}\nContent: {content[:500]}")
+    
+    if response_format is not None:
+        return response_format(**parsed)
+    
+    return parsed
 
 
 class AgentDecision(BaseModel):
@@ -23,6 +374,7 @@ class AgentDecision(BaseModel):
         None,
         description="For read_operator_doc action: the operator name to read documentation for (e.g., 'map', 'filter', 'reduce')",
     )
+
 
 
 class ReadNextDocTool:
@@ -320,19 +672,19 @@ Focus on quality over quantity - a few diverse, informative examples are better 
             )
 
             # Get structured agent decision
-            response = completion(
+            response, step_cost = agent_completion(
                 model=self.agent_llm,
                 messages=self.message_history,
                 response_format=AgentDecision,
-                api_key=os.environ.get("AZURE_API_KEY"),
-                api_base=os.environ.get("AZURE_API_BASE"),
-                api_version=os.environ.get("AZURE_API_VERSION"),
-                azure=True,
             )
-            call_cost += response._hidden_params["response_cost"]
+            call_cost += step_cost
 
             try:
-                decision_json = json.loads(response.choices[0].message.content)
+                content = response.choices[0].message.content
+                if is_together_model(self.agent_llm):
+                    decision_json = _extract_json_from_text(content)
+                else:
+                    decision_json = json.loads(content)
                 decision = AgentDecision(**decision_json)
             except Exception as e:
                 raise Exception(f"Failed to parse agent decision: {str(e)}")
@@ -406,24 +758,23 @@ Provide your response as a JSON object matching this schema: {response_schema.mo
         # Get the final schema response with validation and retries
         rprint("[magenta]🔧 Generating final rewrite schema...[/magenta]")
 
-        from .base import MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS
 
         error_message = ""
 
         for attempt in range(MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS):
-            schema_response = completion(
+            schema_response, step_cost = agent_completion(
                 model=self.agent_llm,
                 messages=self.message_history,
                 response_format=response_schema,
-                api_key=os.environ.get("AZURE_API_KEY"),
-                api_base=os.environ.get("AZURE_API_BASE"),
-                api_version=os.environ.get("AZURE_API_VERSION"),
-                azure=True,
             )
-            call_cost += schema_response._hidden_params["response_cost"]
+            call_cost += step_cost
 
             try:
-                parsed_response = json.loads(schema_response.choices[0].message.content)
+                content = schema_response.choices[0].message.content
+                if is_together_model(self.agent_llm):
+                    parsed_response = _extract_json_from_text(content)
+                else:
+                    parsed_response = json.loads(content)
                 schema_instance = response_schema(**parsed_response)
 
                 # Add any additional validation if provided

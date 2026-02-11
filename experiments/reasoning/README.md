@@ -152,7 +152,7 @@ modal run experiments/reasoning/run_mcts.py \
   --yaml-path=experiments/reasoning/pipelines/medec.yaml \
   --dataset-path=experiments/reasoning/data/train/medec.json \
   --experiment-name=medec_mcts \
-  --dataset=medec
+  --dataset=medec \
   --max-iterations=30
 ```
 

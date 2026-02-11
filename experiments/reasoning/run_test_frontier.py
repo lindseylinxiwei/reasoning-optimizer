@@ -50,9 +50,71 @@ def accuracy_within_tolerance(acc1: float, acc2: float, tolerance_pct: float = 2
     return diff_pct < tolerance_pct
 
 
+def compute_pareto_frontier(points: List[Dict[str, float]]) -> List[Dict[str, float]]:
+    """
+    Compute the Pareto frontier from a list of points.
+    A point is on the Pareto frontier if there's no other point that has:
+    - Lower cost AND higher or equal accuracy, OR
+    - Same cost AND higher accuracy, OR
+    - Lower cost AND same accuracy
+    
+    Args:
+        points: List of dicts with 'cost' and 'accuracy' keys
+        
+    Returns:
+        List of points that are on the Pareto frontier, sorted by cost (ascending)
+    """
+    # Filter out points with None values
+    valid_points = [p for p in points if p.get("cost") is not None and p.get("accuracy") is not None]
+    
+    if not valid_points:
+        return []
+    
+    frontier = []
+    
+    for point in valid_points:
+        cost = point["cost"]
+        accuracy = point["accuracy"]
+        
+        # Check if this point is dominated by any other point
+        is_dominated = False
+        for other_point in valid_points:
+            if other_point == point:
+                continue
+            
+            other_cost = other_point["cost"]
+            other_accuracy = other_point["accuracy"]
+            
+            # Check if other_point dominates this point
+            # Dominated if: (other_cost < cost AND other_accuracy >= accuracy) OR
+            #                (other_cost <= cost AND other_accuracy > accuracy)
+            if (other_cost < cost and other_accuracy >= accuracy) or \
+               (other_cost <= cost and other_accuracy > accuracy):
+                is_dominated = True
+                break
+        
+        if not is_dominated:
+            frontier.append(point)
+    
+    # Sort frontier by cost (ascending) for consistent ordering
+    frontier.sort(key=lambda x: x["cost"])
+    
+    return frontier
+
+
 # Dataset configurations
 DATASETS = ["cuad", "blackvault", "game_reviews", "sustainability", "biodex", "medec", "facility"]
-METHODS = ["simple_baseline", "mcts"]
+METHODS = ["simple_baseline", "mcts", "mcts_kimi"]
+
+# DocETL-V1 baseline results
+DOCETL_V1_RESULTS = {
+    "cuad": {"accuracy": 0.471, "cost": 2.85},
+    "game_reviews": {"accuracy": 0.608, "cost": 1.28},
+    "blackvault": {"accuracy": 5.339, "cost": 0.24},
+    "biodex": {"accuracy": 0.247, "cost": 5.88},
+    "medec": {"accuracy": 0.534, "cost": 0.02},
+    "sustainability": {"accuracy": 0.632, "cost": 5.64}
+}
 
 def calculate_avg_cost_savings_matrix(all_points: Dict[str, List[Dict[str, float]]]) -> Dict[str, Any]:
     """
@@ -69,8 +131,8 @@ def calculate_avg_cost_savings_matrix(all_points: Dict[str, List[Dict[str, float
     # Get all methods including original and reorder them
     available_methods = [m for m in all_points.keys() if all_points[m]]
     
-    # Define the desired order: MCTS, Original, simple_baseline, lotus, PZ variants
-    desired_order = ["mcts", "original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ"]
+    # Define the desired order: MCTS, Original, simple_baseline, lotus, PZ variants, DocETL-V1
+    desired_order = ["mcts", "original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1"]
     
     # Reorder methods according to desired order
     methods = []
@@ -222,8 +284,8 @@ def calculate_best_cost_savings_matrix(all_points: Dict[str, List[Dict[str, floa
     # Get all methods including original and reorder them
     available_methods = [m for m in all_points.keys() if all_points[m]]
     
-    # Define the desired order: MCTS, Original, simple_baseline, lotus, PZ variants
-    desired_order = ["mcts", "original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ"]
+    # Define the desired order: MCTS, Original, simple_baseline, lotus, PZ variants, DocETL-V1
+    desired_order = ["mcts", "original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1"]
     
     # Reorder methods according to desired order
     methods = []
@@ -411,7 +473,7 @@ def calculate_comparison_metrics(all_points: Dict[str, List[Dict[str, float]]]) 
     
     # Define our method vs other systems
     our_method = "mcts"  # Only MCTS is our method
-    other_systems = ["original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ"]
+    other_systems = ["original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1"]
     
     # Filter out methods with no data
     if our_method not in all_points or not all_points[our_method]:
@@ -576,6 +638,7 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
         # Set up paths
         base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
         if method == "mcts": experiment_dir = base_output_dir / f"{dataset}_{method}_final"
+        elif method == "mcts_kimi": experiment_dir = base_output_dir / f"{dataset}_mcts_kimi_full"
         else: experiment_dir = base_output_dir / f"{dataset}_{method}_final"
         pareto_file = experiment_dir / f"pareto_frontier_{dataset}.json"
         
@@ -807,12 +870,13 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
     volumes={VOLUME_MOUNT_PATH: volume},
     timeout=60 * 30
 )
-def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
+def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[str, Any]:
     """
     Generate a plot of test frontier results for all methods.
     
     Args:
         dataset: Dataset name
+        adv_graph: If True, only show Pareto frontier points and connect MCTS points with lines
         
     Returns:
         Dictionary with plot generation status
@@ -832,25 +896,29 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
             "original": [],
             "simple_baseline": [],
             "mcts": [],
+            "mcts_kimi": [],
             "lotus": [],
             "PZ_direct": [],
             "PZ_retrieval": [],
             "PZ": [],
             "LOTUS_d": [],
-            "LOTUS_r&r": []
+            "LOTUS_r&r": [],
+            "DocETL-V1": []
         }
         
         # Method colors
         method_colors = {
             "original": "#ffd700",           # Gold/Yellow
             "simple_baseline": "#2ecc71",    # Green
-            "mcts": "#0f1b3c",               # Very dark navy blue
+            "mcts": "#3498db",               # Bright blue
+            "mcts_kimi": "#e74c3c",          # Bright Red
             "lotus": "#c27cf3",              # Light purple
             "PZ_direct": "#ff0b50",          # Pink/magenta
             "PZ_retrieval": "#ff0b50",       # Pink/magenta (same as PZ_direct)
             "PZ": "#ff0b50",                 # Pink/magenta
             "LOTUS_d": "#c27cf3",            # Light purple
-            "LOTUS_r&r": "#c27cf3"           # Light purple
+            "LOTUS_r&r": "#c27cf3",          # Light purple
+            "DocETL-V1": "#ff9500"           # Orange
         }
         
         # Load test_frontier_summary.json from dataset_original folder
@@ -897,6 +965,37 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
                         print(f"  ⚠️  No successful results found for {method}")
         else:
             print(f"  ⚠️  No test_frontier_summary.json found at {summary_file}")
+        
+        # Load mcts_kimi data from its own pareto frontier file
+        mcts_kimi_pareto_file = base_output_dir / f"{dataset}_mcts_kimi_full" / f"pareto_frontier_{dataset}.json"
+        if mcts_kimi_pareto_file.exists():
+            print(f"  📄 Found mcts_kimi pareto frontier at: {mcts_kimi_pareto_file}")
+            with open(mcts_kimi_pareto_file, 'r') as f:
+                mcts_kimi_data = json.load(f)
+            
+            frontier_points = mcts_kimi_data.get("frontier_points", [])
+            for point in frontier_points:
+                # Use test results if available, otherwise use train results
+                if "test_cost" in point and "test_accuracy" in point and point.get("test_accuracy") is not None:
+                    point_data = {
+                        "cost": point["test_cost"],
+                        "accuracy": point["test_accuracy"]
+                    }
+                elif "cost" in point and "accuracy" in point:
+                    point_data = {
+                        "cost": point["cost"],
+                        "accuracy": point["accuracy"]
+                    }
+                else:
+                    continue
+                
+                if "file" in point:
+                    point_data["file"] = point["file"]
+                all_points["mcts_kimi"].append(point_data)
+            
+            print(f"  ✅ Loaded {len(all_points['mcts_kimi'])} test points from mcts_kimi pareto frontier")
+        else:
+            print(f"  ⚠️  No mcts_kimi pareto frontier found at {mcts_kimi_pareto_file}")
         
         # check local othersystems directory
         local_othersystems = Path("experiments/reasoning/othersystems") / dataset
@@ -971,7 +1070,33 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
         
         # Load PZ evaluation data if available (from local filesystem in Modal image)
         pz_file = Path("experiments/reasoning/othersystems") / dataset / "pz_evaluation.json"
+        pz_direct_file = Path("experiments/reasoning/othersystems") / dataset / "pz_direct_evaluation.json"
         
+        # First, try to load separate pz_direct_evaluation.json file if it exists
+        if pz_direct_file.exists():
+            print(f"  📄 Found PZ direct evaluation at: {pz_direct_file}")
+            with open(pz_direct_file, 'r') as f:
+                pz_direct_data = json.load(f)
+            
+            print(f"  📊 Loading PZ direct data from separate file...")
+            for config_name, config_data in pz_direct_data.items():
+                if isinstance(config_data, dict) and config_name != "metadata":
+                    # Find the accuracy metric using containment
+                    accuracy_value = None
+                    for key in config_data.keys():
+                        if accuracy_metric in key or key in accuracy_metric:
+                            accuracy_value = config_data[key]
+                            break
+                    
+                    if accuracy_value is not None and "plan_execution_cost" in config_data:
+                        all_points["PZ_direct"].append({
+                            "cost": config_data["plan_execution_cost"],
+                            "accuracy": accuracy_value
+                        })
+            
+            print(f"  ✅ Loaded {len(all_points['PZ_direct'])} test points from PZ direct")
+        
+        # Then load pz_evaluation.json if it exists
         if pz_file.exists():
             print(f"  📄 Found PZ evaluation at: {pz_file}")
             with open(pz_file, 'r') as f:
@@ -984,8 +1109,8 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
             if "direct" in pz_data or "retrieval" in pz_data:
                 print(f"  📊 Loading PZ data with direct/retrieval structure...")
                 
-                # Load PZ direct data
-                if "direct" in pz_data:
+                # Load PZ direct data (only if not already loaded from separate file)
+                if "direct" in pz_data and not pz_direct_file.exists():
                     print(f"  📊 Loading PZ direct data...")
                     for config_name, config_data in pz_data["direct"].items():
                         if isinstance(config_data, dict) and config_name != "metadata":
@@ -1042,14 +1167,29 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
                             })
                 
                 print(f"  ✅ Loaded {len(all_points['PZ'])} test points from PZ")
-        else:
+        elif not pz_direct_file.exists():
             print(f"  ⚠️  No PZ evaluation found at {pz_file}")
+        
+        # Load DocETL-V1 baseline data
+        if dataset in DOCETL_V1_RESULTS:
+            docetl_v1_data = DOCETL_V1_RESULTS[dataset]
+            all_points["DocETL-V1"].append({
+                "cost": docetl_v1_data["cost"],
+                "accuracy": docetl_v1_data["accuracy"]
+            })
+            print(f"  ✅ Loaded DocETL-V1 baseline: cost=${docetl_v1_data['cost']:.2f}, accuracy={docetl_v1_data['accuracy']:.3f}")
         
         # Print summary of loaded data
         print(f"\n📊 Data loading summary:")
         for method, points in all_points.items():
             if points:
-                print(f"  {method}: {len(points)} points")
+                # Show details for original method
+                if method == "original":
+                    for p in points:
+                        print(f"  {method}: {len(points)} points")
+                        print(f"    - cost: {p.get('cost')}, accuracy: {p.get('accuracy')}")
+                else:
+                    print(f"  {method}: {len(points)} points")
             else:
                 print(f"  {method}: 0 points")
         
@@ -1075,6 +1215,37 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
         # Create the plot
         fig, ax = plt.subplots(figsize=(10, 6))
         
+        # If adv_graph mode, compute Pareto frontier for each method
+        if adv_graph:
+            print("\n📊 Computing Pareto frontiers for each method...")
+            
+            # For biodex dataset in adv_graph mode, filter out PZ_direct and LOTUS_r&r
+            if dataset == "biodex":
+                print("  📊 Filtering methods for biodex: keeping only PZ-r&r and LOTUS-d")
+                if "PZ_direct" in all_points:
+                    print(f"  ⏭️  Removing PZ_direct ({len(all_points['PZ_direct'])} points)")
+                    all_points["PZ_direct"] = []
+                if "LOTUS_r&r" in all_points:
+                    print(f"  ⏭️  Removing LOTUS_r&r ({len(all_points['LOTUS_r&r'])} points)")
+                    all_points["LOTUS_r&r"] = []
+            
+            for method, points in all_points.items():
+                if points:
+                    # Special handling for original: always keep it if it has valid data
+                    # (since it's a single baseline point and should always be on frontier)
+                    if method == "original" and len(points) == 1:
+                        original_point = points[0]
+                        if original_point.get("cost") is not None and original_point.get("accuracy") is not None:
+                            print(f"  {method}: {len(points)} total points → {len(points)} frontier points (baseline, always shown)")
+                            # Keep the original point as-is (don't recompute frontier for single point)
+                        else:
+                            print(f"  {method}: {len(points)} total points → 0 frontier points (invalid data)")
+                            all_points[method] = []
+                    else:
+                        frontier = compute_pareto_frontier(points)
+                        print(f"  {method}: {len(points)} total points → {len(frontier)} frontier points")
+                        all_points[method] = frontier
+        
         # Plot points for each method
         for method, points in all_points.items():
             if points:
@@ -1094,9 +1265,32 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
                               color=method_colors[method],
                               s=700, marker='*', alpha=0.4, edgecolors='black', linewidth=1)
                 elif method == "mcts":
+                    # For MCTS in adv_graph mode, connect points with black line
+                    if adv_graph and len(costs) > 1:
+                        # Sort by cost for line connection
+                        sorted_indices = sorted(range(len(costs)), key=lambda i: costs[i])
+                        sorted_costs = [costs[i] for i in sorted_indices]
+                        sorted_accuracies = [accuracies[i] for i in sorted_indices]
+                        ax.plot(sorted_costs, sorted_accuracies, 
+                               color='black', linewidth=2, alpha=0.6, zorder=1)
+                    
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
-                              s=450, alpha=0.4, edgecolors='black', linewidth=1)
+                              s=450, alpha=0.4, edgecolors='black', linewidth=1, zorder=2)
+                elif method == "mcts_kimi":
+                    # For MCTS_kimi in adv_graph mode, connect points with red line
+                    if adv_graph and len(costs) > 1:
+                        # Sort by cost for line connection
+                        sorted_indices = sorted(range(len(costs)), key=lambda i: costs[i])
+                        sorted_costs = [costs[i] for i in sorted_indices]
+                        sorted_accuracies = [accuracies[i] for i in sorted_indices]
+                        ax.plot(sorted_costs, sorted_accuracies, 
+                               color='#c0392b', linewidth=2, alpha=0.8, zorder=1)  # Dark red line
+                    
+                    ax.scatter(costs, accuracies, 
+                              color=method_colors[method],
+                              s=500, alpha=0.7, edgecolors='black', linewidth=1.5, zorder=3,
+                              marker='D')  # Diamond marker to distinguish from mcts
                 elif method == "simple_baseline":
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
@@ -1109,12 +1303,19 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
                         "PZ": "PZ",
                         "lotus": "LOTUS",
                         "LOTUS_d": "LOTUS-d",
-                        "LOTUS_r&r": "LOTUS-r&r"
+                        "LOTUS_r&r": "LOTUS-r&r",
+                        "DocETL-V1": "DocETL-V1"
                     }
                     label = label_map.get(method, method.replace("_", " ").title())
                     
                     # Determine marker based on method
-                    marker = '^' if method in ["PZ_retrieval", "LOTUS_r&r"] else 'o'  # Triangle for PZ-r&r and LOTUS-r&r, circle for others
+                    # For biodex dataset, PZ_retrieval uses circle instead of triangle
+                    if dataset == "biodex" and method == "PZ_retrieval":
+                        marker = 'o'  # Circle for PZ-r&r in biodex
+                    elif method in ["PZ_retrieval", "LOTUS_r&r"]:
+                        marker = '^'  # Triangle for PZ-r&r and LOTUS-r&r in other datasets
+                    else:
+                        marker = 'o'  # Circle for others
                     
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
@@ -1224,7 +1425,11 @@ def generate_test_frontier_plot(dataset: str) -> Dict[str, Any]:
         plt.tight_layout()
         
         # Save the plot
-        plot_path = base_output_dir / f"{dataset}_original_final" / "test_frontier_plot.pdf"
+        if adv_graph:
+            plot_filename = "test_frontier_plot_adv.pdf"
+        else:
+            plot_filename = "test_frontier_plot.pdf"
+        plot_path = base_output_dir / f"{dataset}_original_final" / plot_filename
         plot_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close()
@@ -1329,26 +1534,27 @@ def generate_legend_plot() -> Dict[str, Any]:
         method_colors = {
             "original": "#ffd700",           # Gold/Yellow
             "simple_baseline": "#2ecc71",    # Green
-            "mcts": "#0f1b3c",               # Very dark navy blue
+            "mcts": "#3498db",               # Bright blue
+            "mcts_kimi": "#e74c3c",          # Bright Red
             "lotus": "#c27cf3",              # Light purple
             "PZ_direct": "#ff0b50",          # Pink/magenta
             "PZ_retrieval": "#ff0b50",       # Pink/magenta (same as PZ_direct)
             "PZ": "#ff0b50",                 # Pink/magenta
             "LOTUS_d": "#c27cf3",            # Light purple
-            "LOTUS_r&r": "#c27cf3"          # Light purple
+            "LOTUS_r&r": "#c27cf3",          # Light purple
+            "DocETL-V1": "#ff9500"           # Orange
         }
         
         # Define all methods with their labels, markers, and sizes
+        # Removed PZ-d, PZ-r&r, LOTUS-d, LOTUS-r&r as requested
         methods_info = [
             {"key": "original", "label": "User-specified plan", "marker": "*", "size": 700},
             {"key": "mcts", "label": "MOAR", "marker": "o", "size": 450},
+            {"key": "mcts_kimi", "label": "MOAR-Kimi", "marker": "D", "size": 500},
             {"key": "simple_baseline", "label": "Simple agent", "marker": "o", "size": 450},
-            {"key": "PZ_direct", "label": "PZ-d", "marker": "o", "size": 450},
-            {"key": "PZ_retrieval", "label": "PZ-r&r", "marker": "^", "size": 450},
             {"key": "PZ", "label": "PZ", "marker": "o", "size": 450},
             {"key": "lotus", "label": "LOTUS", "marker": "o", "size": 450},
-            {"key": "LOTUS_d", "label": "LOTUS-d", "marker": "o", "size": 450},
-            {"key": "LOTUS_r&r", "label": "LOTUS-r&r", "marker": "^", "size": 450},
+            {"key": "DocETL-V1", "label": "DocETL-V1", "marker": "o", "size": 450},
         ]
         
         # Create a figure with just enough space for the legend
@@ -1541,12 +1747,13 @@ def run_original_baseline_test(dataset: str) -> Dict[str, Any]:
     volumes={VOLUME_MOUNT_PATH: volume},
     timeout=60 * 60 * 3  # 3 hours timeout for all methods
 )
-def run_all_test_frontiers(dataset: str) -> Dict[str, Any]:
+def run_all_test_frontiers(dataset: str, adv_graph: bool = False) -> Dict[str, Any]:
     """
     Run test frontier evaluation for all methods (original_baseline, simple_baseline, baseline, mcts) for a dataset.
     
     Args:
         dataset: Dataset name
+        adv_graph: If True, only show Pareto frontier points and connect MCTS points with lines in the plot
         
     Returns:
         Combined results for all methods including original baseline
@@ -1601,7 +1808,8 @@ def run_all_test_frontiers(dataset: str) -> Dict[str, Any]:
         "PZ_retrieval": [],
         "PZ_direct": [],
         "LOTUS_d": [],
-        "LOTUS_r&r": []
+        "LOTUS_r&r": [],
+        "DocETL-V1": []
     }
     
     # Extract points from our method (MCTS)
@@ -1676,12 +1884,34 @@ def run_all_test_frontiers(dataset: str) -> Dict[str, Any]:
     
     # Load PZ evaluation data
     pz_file = local_othersystems / "pz_evaluation.json"
+    pz_direct_file = local_othersystems / "pz_direct_evaluation.json"
+    
+    # First, try to load separate pz_direct_evaluation.json file if it exists
+    if pz_direct_file.exists():
+        with open(pz_direct_file, 'r') as f:
+            pz_direct_data = json.load(f)
+        
+        for config_name, config_data in pz_direct_data.items():
+            if isinstance(config_data, dict) and config_name != "metadata":
+                accuracy_value = None
+                for key in config_data.keys():
+                    if accuracy_metric in key or key in accuracy_metric:
+                        accuracy_value = config_data[key]
+                        break
+                
+                if accuracy_value is not None and "plan_execution_cost" in config_data and config_data["plan_execution_cost"] is not None:
+                    all_points["PZ_direct"].append({
+                        "cost": config_data["plan_execution_cost"],
+                        "accuracy": accuracy_value
+                    })
+    
+    # Then load pz_evaluation.json if it exists
     if pz_file.exists():
         with open(pz_file, 'r') as f:
             pz_data = json.load(f)
         
-        # Load PZ direct data
-        if "direct" in pz_data:
+        # Load PZ direct data (only if not already loaded from separate file)
+        if "direct" in pz_data and not pz_direct_file.exists():
             for config_name, config_data in pz_data["direct"].items():
                 if isinstance(config_data, dict) and config_name != "metadata":
                     accuracy_value = None
@@ -1711,6 +1941,15 @@ def run_all_test_frontiers(dataset: str) -> Dict[str, Any]:
                             "cost": config_data["plan_execution_cost"],
                             "accuracy": accuracy_value
                         })
+    
+    # Load DocETL-V1 baseline data
+    if dataset in DOCETL_V1_RESULTS:
+        docetl_v1_data = DOCETL_V1_RESULTS[dataset]
+        all_points["DocETL-V1"].append({
+            "cost": docetl_v1_data["cost"],
+            "accuracy": docetl_v1_data["accuracy"]
+        })
+        print(f"  ✅ Loaded DocETL-V1 baseline: cost=${docetl_v1_data['cost']:.2f}, accuracy={docetl_v1_data['accuracy']:.3f}")
         
     # Calculate metrics
     comparison_metrics = calculate_comparison_metrics(all_points)
@@ -1760,7 +1999,9 @@ def run_all_test_frontiers(dataset: str) -> Dict[str, Any]:
     
     # Generate test frontier plot
     print("\n📊 Generating test frontier plot...")
-    plot_result = generate_test_frontier_plot.local(dataset)
+    if adv_graph:
+        print("   Using advanced graph mode (Pareto frontier only, MCTS connected)")
+    plot_result = generate_test_frontier_plot.local(dataset, adv_graph=adv_graph)
     if plot_result["success"]:
         print(f"✅ Plot saved to: {plot_result['plot_path']}")
         summary["plot_path"] = plot_result["plot_path"]
@@ -2031,7 +2272,8 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
             "PZ_retrieval": [],
             "PZ": [],
             "LOTUS_d": [],
-            "LOTUS_r&r": []
+            "LOTUS_r&r": [],
+            "DocETL-V1": []
         }
         
         # Load test_frontier_summary.json from dataset_original folder
@@ -2126,14 +2368,39 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
         
         # Load PZ evaluation data if available
         pz_file = Path("experiments/reasoning/othersystems") / dataset / "pz_evaluation.json"
+        pz_direct_file = Path("experiments/reasoning/othersystems") / dataset / "pz_direct_evaluation.json"
         
+        # First, try to load separate pz_direct_evaluation.json file if it exists
+        if pz_direct_file.exists():
+            print(f"  📄 Found PZ direct evaluation at: {pz_direct_file}")
+            with open(pz_direct_file, 'r') as f:
+                pz_direct_data = json.load(f)
+            
+            print(f"  📊 Loading PZ direct data from separate file...")
+            for config_name, config_data in pz_direct_data.items():
+                if isinstance(config_data, dict) and config_name != "metadata":
+                    accuracy_value = None
+                    for key in config_data.keys():
+                        if accuracy_metric in key or key in accuracy_metric:
+                            accuracy_value = config_data[key]
+                            break
+                    
+                    if accuracy_value is not None and "plan_execution_cost" in config_data:
+                        all_points["PZ_direct"].append({
+                            "cost": config_data["plan_execution_cost"],
+                            "accuracy": accuracy_value
+                        })
+            
+            print(f"  ✅ Loaded {len(all_points['PZ_direct'])} test points from PZ direct")
+        
+        # Then load pz_evaluation.json if it exists
         if pz_file.exists():
             print(f"  📄 Found PZ evaluation at: {pz_file}")
             with open(pz_file, 'r') as f:
                 pz_data = json.load(f)
             
-            # Load PZ direct data
-            if "direct" in pz_data:
+            # Load PZ direct data (only if not already loaded from separate file)
+            if "direct" in pz_data and not pz_direct_file.exists():
                 for config_name, config_data in pz_data["direct"].items():
                     if isinstance(config_data, dict) and config_name != "metadata":
                         accuracy_value = None
@@ -2183,8 +2450,17 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
                             })
                 
                 print(f"  ✅ Loaded {len(all_points['PZ'])} test points from PZ")
-        else:
+        elif not pz_direct_file.exists():
             print(f"  ⚠️  No PZ evaluation found at {pz_file}")
+        
+        # Load DocETL-V1 baseline data
+        if dataset in DOCETL_V1_RESULTS:
+            docetl_v1_data = DOCETL_V1_RESULTS[dataset]
+            all_points["DocETL-V1"].append({
+                "cost": docetl_v1_data["cost"],
+                "accuracy": docetl_v1_data["accuracy"]
+            })
+            print(f"  ✅ Loaded DocETL-V1 baseline: cost=${docetl_v1_data['cost']:.2f}, accuracy={docetl_v1_data['accuracy']:.3f}")
         
         # Calculate matrices
         print("\n📊 Calculating all matrices...")
@@ -2221,11 +2497,30 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
             print(f"Original accuracy: {original_best_accuracy:.3f}")
         print()
         
+        print(f"{'Method':<20} | {'Highest Accuracy':<18} | {'Total Points':<15} | {'Points Above Original':<20}")
+        print("-" * 80)
         for method in methods:
             best_info = best_matrix_result["method_info"][method]
             # Only get avg_info and cov_info if the method exists in those matrices
             avg_info = avg_matrix_result["method_info"].get(method, {"valid_points": 0, "points_above_original": 0})
-            print(f"{method:15} | Total points: {best_info['valid_points']} | Points above original: {best_info['points_above_original']}")
+            best_accuracy = best_info.get("best_accuracy")
+            if best_accuracy is not None:
+                accuracy_str = f"{best_accuracy:.4f}"
+            else:
+                accuracy_str = "N/A"
+            print(f"{method:<20} | {accuracy_str:<18} | {best_info['valid_points']:<15} | {best_info['points_above_original']:<20}")
+        print()
+        
+        # Print summary of highest accuracies
+        print("="*80)
+        print("HIGHEST ACCURACY SUMMARY")
+        print("="*80)
+        for method in methods:
+            best_info = best_matrix_result["method_info"][method]
+            best_accuracy = best_info.get("best_accuracy")
+            if best_accuracy is not None:
+                print(f"{method:<20} {best_accuracy:.4f}")
+        print("="*80)
         print()
         
         # Print matrix headers
@@ -2348,7 +2643,7 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
 
 
 @app.local_entrypoint()
-def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False, legend_only: bool = False):
+def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False, legend_only: bool = False, adv_graph: bool = False):
     """
     Main entrypoint for running test frontier evaluation.
     
@@ -2359,6 +2654,7 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
         matrix_only: If True, only generate all three matrices without running evaluations
         tradeoff: If True, only run the top 2 accuracy tradeoff analysis for MCTS across all datasets
         legend_only: If True, only generate the standalone legend plot
+        adv_graph: If True, only show Pareto frontier points and connect MCTS points with lines
     """
     if legend_only:
         # Generate standalone legend plot
@@ -2414,7 +2710,9 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
         datasets_to_plot = DATASETS if dataset == "all" else [dataset]
         for dataset_name in datasets_to_plot:
             print(f"\n📊 Generating plot for {dataset_name}...")
-            plot_result = generate_test_frontier_plot.remote(dataset_name)
+            if adv_graph:
+                print("   Using advanced graph mode (Pareto frontier only, MCTS connected)")
+            plot_result = generate_test_frontier_plot.remote(dataset_name, adv_graph=adv_graph)
             if plot_result["success"]:
                 print(f"✅ Plot saved to: {plot_result['plot_path']}")
                 print(f"   Total points: {plot_result['total_points']}")
@@ -2436,7 +2734,7 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
     for dataset_name in datasets_to_process:
         if method == "all":
             # Run all methods for this dataset
-            result = run_all_test_frontiers.remote(dataset_name)
+            result = run_all_test_frontiers.remote(dataset_name, adv_graph=adv_graph)
             print(f"\n{'='*70}")
             print(f"SUMMARY FOR {dataset_name.upper()}")
             print(f"{'='*70}")
@@ -2453,7 +2751,9 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
                 print("📄 Results saved to pareto frontier file")
                 # Generate plot after single method run
                 print("\n📊 Generating test frontier plot...")
-                plot_result = generate_test_frontier_plot.remote(dataset_name)
+                if adv_graph:
+                    print("   Using advanced graph mode (Pareto frontier only, MCTS connected)")
+                plot_result = generate_test_frontier_plot.remote(dataset_name, adv_graph=adv_graph)
                 if plot_result["success"]:
                     print(f"📈 Plot saved to: {plot_result['plot_path']}")
             else:
