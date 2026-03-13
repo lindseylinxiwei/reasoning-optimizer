@@ -104,7 +104,7 @@ def compute_pareto_frontier(points: List[Dict[str, float]]) -> List[Dict[str, fl
 
 # Dataset configurations
 DATASETS = ["cuad", "blackvault", "game_reviews", "sustainability", "biodex", "medec", "facility"]
-METHODS = ["simple_baseline", "mcts", "mcts_kimi"]
+METHODS = ["simple_baseline", "mcts", "mcts_kimi", "mcts_llama", "mcts_old_directive"]
 
 # DocETL-V1 baseline results
 DOCETL_V1_RESULTS = {
@@ -638,7 +638,9 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
         # Set up paths
         base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
         if method == "mcts": experiment_dir = base_output_dir / f"{dataset}_{method}_final"
-        elif method == "mcts_kimi": experiment_dir = base_output_dir / f"{dataset}_mcts_kimi_full"
+        elif method == "mcts_kimi": experiment_dir = base_output_dir / f"{dataset}_mcts_kimi2_5_full"
+        elif method == "mcts_llama": experiment_dir = base_output_dir / f"{dataset}_mcts_Llama4_full"
+        elif method == "mcts_old_directive": experiment_dir = base_output_dir / f"{dataset}_mcts_old_directive"
         else: experiment_dir = base_output_dir / f"{dataset}_{method}_final"
         pareto_file = experiment_dir / f"pareto_frontier_{dataset}.json"
         
@@ -675,7 +677,15 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
             # Extract file name from point
             point_file = point.get("file")
             print(point_file)
-            # if point_file == "gpt_config_4.json": continue
+            
+            # TEMPORARY: Skip pipelines that are known to fail (to avoid wasting money)
+            skip_files = [
+                "gemini_2.5_flash_lite_config_18.json",  # Fails due to flash-lite model struggling with complex schema
+            ]
+            if point_file in skip_files:
+                print(f"⏭️  Skipping {point_file} (known to fail)")
+                continue
+            
             if method != "mcts" and "test_cost" in point and "test_error" not in point: 
                 test_results.append({
                     "file": point.get("file"),
@@ -692,6 +702,7 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
             
             # Get the base name without .json extension
             base_name = Path(point_file).stem  # e.g., "cuad_modal_12" or "baseline_output" or "iteration_5_output"
+            original_base_name = base_name  # Save original for matching with pareto frontier points
             
             # Determine the correct YAML file name
             if base_name == "baseline_output":
@@ -751,6 +762,42 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
             test_plans_dir = Path(test_output).parent
             test_plans_dir.mkdir(parents=True, exist_ok=True)
             
+            # Check if test output file already exists - if so, skip running and just evaluate
+            if Path(test_output).exists():
+                print(f"✅ Test output file already exists: {test_output}")
+                print("   Skipping pipeline run, evaluating existing results...")
+                
+                try:
+                    # Evaluate existing results
+                    eval_func = get_evaluate_func(dataset, mode="test")
+                    if eval_func:
+                        accuracy_results = eval_func(base_name, test_output)
+                        accuracy_metric = dataset_accuracy_metrics.get(dataset, "accuracy")
+                        accuracy = accuracy_results.get(accuracy_metric, 0.0)
+                        print(f"📈 Accuracy ({accuracy_metric}): {accuracy:.3f}")
+                    else:
+                        print(f"⚠️  No evaluation function found for {dataset}")
+                        accuracy = None
+                        accuracy_metric = None
+                    
+                    # Try to get cost from existing pareto frontier point if available
+                    existing_cost = point.get("test_cost") or point.get("cost")
+                    existing_latency = point.get("test_latency")
+                    
+                    test_results.append({
+                        "file": original_base_name,  # Use original name for matching with pareto points
+                        "cost": existing_cost,
+                        "accuracy": accuracy,
+                        "accuracy_metric": accuracy_metric,
+                        "latency": existing_latency,
+                        "cached": True,
+                    })
+                    continue
+                    
+                except Exception as e:
+                    print(f"⚠️  Error evaluating existing results: {e}")
+                    print("   Will re-run pipeline...")
+            
             # Save modified YAML to /tmp for temporary use (we don't need to keep these)
             test_yaml_path = Path("/tmp") / f"{dataset}_{method}_final_{base_name}_test.yaml"
             with open(test_yaml_path, 'w') as f:
@@ -795,7 +842,7 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
                 
                 # Store result
                 test_results.append({
-                    "file": base_name,
+                    "file": original_base_name,  # Use original name for matching with pareto points
                     "cost": total_cost,
                     "accuracy": accuracy,
                     "accuracy_metric": accuracy_metric,
@@ -806,7 +853,7 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
                 print(f"❌ Error running pipeline: {e}")
                 traceback.print_exc()
                 test_results.append({
-                    "file": base_name,
+                    "file": original_base_name,  # Use original name for matching with pareto points
                     "error": str(e),
                 })
         
@@ -897,6 +944,8 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
             "simple_baseline": [],
             "mcts": [],
             "mcts_kimi": [],
+            "mcts_llama": [],
+            "mcts_old_directive": [],
             "lotus": [],
             "PZ_direct": [],
             "PZ_retrieval": [],
@@ -912,6 +961,8 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
             "simple_baseline": "#2ecc71",    # Green
             "mcts": "#3498db",               # Bright blue
             "mcts_kimi": "#e74c3c",          # Bright Red
+            "mcts_llama": "#9b59b6",         # Purple
+            "mcts_old_directive": "#1abc9c", # Teal
             "lotus": "#c27cf3",              # Light purple
             "PZ_direct": "#ff0b50",          # Pink/magenta
             "PZ_retrieval": "#ff0b50",       # Pink/magenta (same as PZ_direct)
@@ -967,7 +1018,7 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
             print(f"  ⚠️  No test_frontier_summary.json found at {summary_file}")
         
         # Load mcts_kimi data from its own pareto frontier file
-        mcts_kimi_pareto_file = base_output_dir / f"{dataset}_mcts_kimi_full" / f"pareto_frontier_{dataset}.json"
+        mcts_kimi_pareto_file = base_output_dir / f"{dataset}_mcts_kimi2_5_full" / f"pareto_frontier_{dataset}.json"
         if mcts_kimi_pareto_file.exists():
             print(f"  📄 Found mcts_kimi pareto frontier at: {mcts_kimi_pareto_file}")
             with open(mcts_kimi_pareto_file, 'r') as f:
@@ -996,6 +1047,68 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
             print(f"  ✅ Loaded {len(all_points['mcts_kimi'])} test points from mcts_kimi pareto frontier")
         else:
             print(f"  ⚠️  No mcts_kimi pareto frontier found at {mcts_kimi_pareto_file}")
+        
+        # Load mcts_llama data from its own pareto frontier file
+        mcts_llama_pareto_file = base_output_dir / f"{dataset}_mcts_Llama4_full" / f"pareto_frontier_{dataset}.json"
+        if mcts_llama_pareto_file.exists():
+            print(f"  📄 Found mcts_llama pareto frontier at: {mcts_llama_pareto_file}")
+            with open(mcts_llama_pareto_file, 'r') as f:
+                mcts_llama_data = json.load(f)
+            
+            frontier_points = mcts_llama_data.get("frontier_points", [])
+            for point in frontier_points:
+                # Use test results if available, otherwise use train results
+                if "test_cost" in point and "test_accuracy" in point and point.get("test_accuracy") is not None:
+                    point_data = {
+                        "cost": point["test_cost"],
+                        "accuracy": point["test_accuracy"]
+                    }
+                elif "cost" in point and "accuracy" in point:
+                    point_data = {
+                        "cost": point["cost"],
+                        "accuracy": point["accuracy"]
+                    }
+                else:
+                    continue
+                
+                if "file" in point:
+                    point_data["file"] = point["file"]
+                all_points["mcts_llama"].append(point_data)
+            
+            print(f"  ✅ Loaded {len(all_points['mcts_llama'])} test points from mcts_llama pareto frontier")
+        else:
+            print(f"  ⚠️  No mcts_llama pareto frontier found at {mcts_llama_pareto_file}")
+        
+        # Load mcts_old_directive data from its own pareto frontier file
+        mcts_old_directive_pareto_file = base_output_dir / f"{dataset}_mcts_old_directive" / f"pareto_frontier_{dataset}.json"
+        if mcts_old_directive_pareto_file.exists():
+            print(f"  📄 Found mcts_old_directive pareto frontier at: {mcts_old_directive_pareto_file}")
+            with open(mcts_old_directive_pareto_file, 'r') as f:
+                mcts_old_directive_data = json.load(f)
+            
+            frontier_points = mcts_old_directive_data.get("frontier_points", [])
+            for point in frontier_points:
+                # Use test results if available, otherwise use train results
+                if "test_cost" in point and "test_accuracy" in point and point.get("test_accuracy") is not None:
+                    point_data = {
+                        "cost": point["test_cost"],
+                        "accuracy": point["test_accuracy"]
+                    }
+                elif "cost" in point and "accuracy" in point:
+                    point_data = {
+                        "cost": point["cost"],
+                        "accuracy": point["accuracy"]
+                    }
+                else:
+                    continue
+                
+                if "file" in point:
+                    point_data["file"] = point["file"]
+                all_points["mcts_old_directive"].append(point_data)
+            
+            print(f"  ✅ Loaded {len(all_points['mcts_old_directive'])} test points from mcts_old_directive pareto frontier")
+        else:
+            print(f"  ⚠️  No mcts_old_directive pareto frontier found at {mcts_old_directive_pareto_file}")
         
         # check local othersystems directory
         local_othersystems = Path("experiments/reasoning/othersystems") / dataset
@@ -1229,6 +1342,15 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                     print(f"  ⏭️  Removing LOTUS_r&r ({len(all_points['LOTUS_r&r'])} points)")
                     all_points["LOTUS_r&r"] = []
             
+            # Get original accuracy for filtering
+            original_accuracy = None
+            original_points = all_points.get("original", [])
+            if original_points:
+                valid_original = [p for p in original_points if p.get("accuracy") is not None and p.get("accuracy") != 0]
+                if valid_original:
+                    original_accuracy = valid_original[0]["accuracy"] / normalize_factor
+                    print(f"  📊 Original accuracy: {original_accuracy:.4f} (will filter out points below this)")
+            
             for method, points in all_points.items():
                 if points:
                     # Special handling for original: always keep it if it has valid data
@@ -1245,13 +1367,31 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                         frontier = compute_pareto_frontier(points)
                         print(f"  {method}: {len(points)} total points → {len(frontier)} frontier points")
                         all_points[method] = frontier
+            
+            # Filter out all points below original accuracy (except original itself)
+            if original_accuracy is not None:
+                print(f"\n📊 Filtering out points below original accuracy ({original_accuracy:.4f})...")
+                for method, points in all_points.items():
+                    if method == "original":
+                        continue  # Don't filter the original itself
+                    if points:
+                        before_count = len(points)
+                        # Filter: keep only points with accuracy >= original_accuracy (after normalization)
+                        filtered_points = [p for p in points 
+                                          if p.get("accuracy") is not None 
+                                          and (p["accuracy"] / normalize_factor) >= original_accuracy]
+                        all_points[method] = filtered_points
+                        after_count = len(filtered_points)
+                        if before_count != after_count:
+                            print(f"  {method}: {before_count} → {after_count} points (removed {before_count - after_count} below original)")
         
         # Plot points for each method
         for method, points in all_points.items():
             if points:
-                # Filter out None values and normalize
+                # Filter out None values, zero values (invalid plans), and normalize
                 valid_data = [(p["cost"], p["accuracy"] / normalize_factor) 
-                             for p in points if p.get("accuracy") is not None and p.get("cost") is not None]
+                             for p in points if p.get("accuracy") is not None and p.get("cost") is not None
+                             and p.get("accuracy") != 0 and p.get("cost") != 0]
                 
                 if not valid_data:
                     continue
@@ -1291,6 +1431,34 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                               color=method_colors[method],
                               s=500, alpha=0.7, edgecolors='black', linewidth=1.5, zorder=3,
                               marker='D')  # Diamond marker to distinguish from mcts
+                elif method == "mcts_llama":
+                    # For MCTS_llama in adv_graph mode, connect points with purple line
+                    if adv_graph and len(costs) > 1:
+                        # Sort by cost for line connection
+                        sorted_indices = sorted(range(len(costs)), key=lambda i: costs[i])
+                        sorted_costs = [costs[i] for i in sorted_indices]
+                        sorted_accuracies = [accuracies[i] for i in sorted_indices]
+                        ax.plot(sorted_costs, sorted_accuracies, 
+                               color='#7b3f9b', linewidth=2, alpha=0.8, zorder=1)  # Dark purple line
+                    
+                    ax.scatter(costs, accuracies, 
+                              color=method_colors[method],
+                              s=500, alpha=0.7, edgecolors='black', linewidth=1.5, zorder=3,
+                              marker='s')  # Square marker to distinguish from mcts and mcts_kimi
+                elif method == "mcts_old_directive":
+                    # For MCTS_old_directive in adv_graph mode, connect points with teal line
+                    if adv_graph and len(costs) > 1:
+                        # Sort by cost for line connection
+                        sorted_indices = sorted(range(len(costs)), key=lambda i: costs[i])
+                        sorted_costs = [costs[i] for i in sorted_indices]
+                        sorted_accuracies = [accuracies[i] for i in sorted_indices]
+                        ax.plot(sorted_costs, sorted_accuracies, 
+                               color='#16a085', linewidth=2, alpha=0.8, zorder=1)  # Dark teal line
+                    
+                    ax.scatter(costs, accuracies, 
+                              color=method_colors[method],
+                              s=500, alpha=0.7, edgecolors='black', linewidth=1.5, zorder=3,
+                              marker='p')  # Pentagon marker to distinguish from other mcts variants
                 elif method == "simple_baseline":
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
@@ -1518,6 +1686,578 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
     volumes={VOLUME_MOUNT_PATH: volume},
     timeout=60 * 30
 )
+def calculate_generalization_metrics_all() -> Dict[str, Any]:
+    """
+    Calculate generalization metrics (train vs test) for all datasets without plotting.
+    
+    Returns:
+        Dictionary with metrics for all datasets
+    """
+    try:
+        print(f"\n{'='*80}")
+        print("GENERALIZATION METRICS FOR ALL DATASETS")
+        print(f"{'='*80}\n")
+        
+        base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
+        all_metrics = {}
+        
+        # Collect metrics across all datasets for averaging
+        all_mean_diffs = []
+        all_mean_rel_diffs = []
+        
+        # Skip facility dataset
+        datasets_to_process = [d for d in DATASETS if d != "facility"]
+        
+        for dataset in datasets_to_process:
+            print(f"\n📊 Processing {dataset}...")
+            
+            # Get the accuracy metric name for the dataset
+            accuracy_metric = dataset_accuracy_metrics.get(dataset, "accuracy")
+            
+            # Load MCTS pareto frontier data
+            mcts_pareto_file = base_output_dir / f"{dataset}_mcts_final" / f"pareto_frontier_{dataset}.json"
+            
+            if not mcts_pareto_file.exists():
+                print(f"  ⚠️  No MCTS pareto frontier found at {mcts_pareto_file}")
+                all_metrics[dataset] = {"error": "No pareto frontier found"}
+                continue
+            
+            with open(mcts_pareto_file, 'r') as f:
+                mcts_data = json.load(f)
+            
+            # Get the accuracy metric from the pareto data
+            pareto_accuracy_metric = mcts_data.get("accuracy_metric", accuracy_metric)
+            
+            frontier_points = mcts_data.get("frontier_points", [])
+            
+            paired_points = []
+            for point in frontier_points:
+                # Extract train data
+                train_cost = point.get("cost")
+                train_accuracy = point.get("mcts_accuracy")
+                
+                # Extract test data
+                test_cost = point.get("test_cost")
+                test_accuracy = point.get("test_accuracy")
+                
+                # Only add if both train and test data exist
+                if (train_cost is not None and train_accuracy is not None and
+                    test_cost is not None and test_accuracy is not None):
+                    paired_points.append({
+                        "file": point.get("file", "unknown"),
+                        "train_accuracy": train_accuracy,
+                        "test_accuracy": test_accuracy
+                    })
+            
+            if not paired_points:
+                print(f"  ⚠️  No valid paired points found")
+                all_metrics[dataset] = {"error": "No paired points"}
+                continue
+            
+            # For blackvault, normalize accuracy by dividing by max accuracy
+            if dataset == "blackvault":
+                all_accuracies = []
+                for p in paired_points:
+                    all_accuracies.append(p["train_accuracy"])
+                    all_accuracies.append(p["test_accuracy"])
+                if all_accuracies:
+                    normalize_factor = max(all_accuracies)
+                    print(f"  📊 Normalizing blackvault: dividing by max accuracy = {normalize_factor:.4f}")
+                    for p in paired_points:
+                        p["train_accuracy"] = p["train_accuracy"] / normalize_factor
+                        p["test_accuracy"] = p["test_accuracy"] / normalize_factor
+            
+            # Load original baseline accuracy
+            original_accuracy = None
+            summary_file = base_output_dir / f"{dataset}_original_final" / "test_frontier_summary.json"
+            if summary_file.exists():
+                with open(summary_file, 'r') as f:
+                    summary_data = json.load(f)
+                if "results" in summary_data and "original" in summary_data["results"]:
+                    original_result = summary_data["results"]["original"]
+                    if original_result.get("success") and "accuracy" in original_result:
+                        original_accuracy = original_result["accuracy"]
+                        # For blackvault, also normalize the original accuracy
+                        if dataset == "blackvault" and normalize_factor:
+                            original_accuracy = original_accuracy / normalize_factor
+            
+            # Filter out pairs with train accuracy lower than original
+            if original_accuracy is not None:
+                paired_points = [p for p in paired_points if p["train_accuracy"] >= original_accuracy]
+            
+            if not paired_points:
+                print(f"  ⚠️  No valid paired points above original accuracy")
+                all_metrics[dataset] = {"error": "No points above original"}
+                continue
+            
+            # Calculate metrics
+            train_accs = np.array([p["train_accuracy"] for p in paired_points])
+            test_accs = np.array([p["test_accuracy"] for p in paired_points])
+            
+            # Mean difference (test - train)
+            diffs = test_accs - train_accs
+            mean_diff = np.mean(diffs)
+            std_diff = np.std(diffs)
+            
+            # Mean relative difference (%) - relative to train
+            rel_diffs = (test_accs - train_accs) / train_accs * 100
+            mean_rel_diff = np.mean(rel_diffs)
+            std_rel_diff = np.std(rel_diffs)
+            
+            all_metrics[dataset] = {
+                "num_plans": len(paired_points),
+                "mean_diff": float(mean_diff),
+                "std_diff": float(std_diff),
+                "mean_rel_diff_pct": float(mean_rel_diff),
+                "std_rel_diff_pct": float(std_rel_diff)
+            }
+            
+            all_mean_diffs.append(mean_diff)
+            all_mean_rel_diffs.append(mean_rel_diff)
+            
+            print(f"  ✅ {dataset}: {len(paired_points)} plans")
+            print(f"     Mean diff (test-train): {mean_diff:+.4f} (std: {std_diff:.4f})")
+            print(f"     Mean rel diff: {mean_rel_diff:+.2f}% (std: {std_rel_diff:.2f}%)")
+        
+        # Calculate overall averages
+        if all_mean_diffs:
+            overall_mean_diff = np.mean(all_mean_diffs)
+            overall_mean_rel_diff = np.mean(all_mean_rel_diffs)
+        else:
+            overall_mean_diff = None
+            overall_mean_rel_diff = None
+        
+        # Print summary table
+        print(f"\n{'='*80}")
+        print("SUMMARY TABLE")
+        print(f"{'='*80}")
+        print(f"{'Dataset':<15} | {'Plans':<6} | {'Mean Diff':>12} | {'Std Diff':>10} | {'Mean Rel %':>12} | {'Std Rel %':>10}")
+        print("-" * 80)
+        
+        for dataset in datasets_to_process:
+            if dataset in all_metrics and "error" not in all_metrics[dataset]:
+                m = all_metrics[dataset]
+                print(f"{dataset:<15} | {m['num_plans']:<6} | {m['mean_diff']:>+12.4f} | {m['std_diff']:>10.4f} | {m['mean_rel_diff_pct']:>+11.2f}% | {m['std_rel_diff_pct']:>9.2f}%")
+            else:
+                error = all_metrics.get(dataset, {}).get("error", "Unknown")
+                print(f"{dataset:<15} | {'--':<6} | {'--':>12} | {'--':>10} | {'--':>12} | {'--':>10}  ({error})")
+        
+        print("-" * 80)
+        if overall_mean_diff is not None:
+            print(f"{'AVERAGE':<15} | {'--':<6} | {overall_mean_diff:>+12.4f} | {'--':>10} | {overall_mean_rel_diff:>+11.2f}% | {'--':>10}")
+        print(f"{'='*80}\n")
+        
+        return {
+            "success": True,
+            "metrics_by_dataset": all_metrics,
+            "overall_mean_diff": overall_mean_diff,
+            "overall_mean_rel_diff_pct": overall_mean_rel_diff
+        }
+        
+    except Exception as e:
+        print(f"❌ Error calculating generalization metrics: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_dotenv()],
+    volumes={VOLUME_MOUNT_PATH: volume},
+    timeout=60 * 30
+)
+def generate_train_test_comparison_plot(dataset: str) -> Dict[str, Any]:
+    """
+    Generate a plot comparing MOAR (mcts) results on train vs test sets.
+    
+    Design:
+    - Color indicates plan rank (by train accuracy): #1 = darkest, lower ranks = lighter
+    - Shape indicates train vs test: circle (o) = train, triangle (^) = test
+    - Lines connect train-test pairs for the same plan
+    
+    Args:
+        dataset: Dataset name
+        
+    Returns:
+        Dictionary with plot generation status
+    """
+    matplotlib.use('Agg')  # Use non-interactive backend for Modal
+    
+    try:
+        print(f"\n📊 Generating train vs test comparison plot for {dataset} (MOAR only)")
+        
+        base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
+        
+        # Get the accuracy metric name for the dataset
+        accuracy_metric = dataset_accuracy_metrics.get(dataset, "accuracy")
+        
+        # Load MCTS pareto frontier data
+        mcts_pareto_file = base_output_dir / f"{dataset}_mcts_final" / f"pareto_frontier_{dataset}.json"
+        
+        paired_points = []  # Each item has both train and test data for the same plan
+        
+        if mcts_pareto_file.exists():
+            print(f"  📄 Found MCTS pareto frontier at: {mcts_pareto_file}")
+            with open(mcts_pareto_file, 'r') as f:
+                mcts_data = json.load(f)
+            
+            # Get the accuracy metric from the pareto data (e.g., "f1", "accuracy", etc.)
+            pareto_accuracy_metric = mcts_data.get("accuracy_metric", accuracy_metric)
+            
+            frontier_points = mcts_data.get("frontier_points", [])
+            
+            for point in frontier_points:
+                # Extract train data - accuracy is stored under the metric name (e.g., "f1")
+                train_cost = point.get("cost") / 4.0 * 10.0
+                train_accuracy = point.get("mcts_accuracy")  # Use the accuracy metric name
+                
+                # Extract test data
+                test_cost = point.get("test_cost")
+                test_accuracy = point.get("test_accuracy")
+                
+                # Only add if both train and test data exist
+                if (train_cost is not None and train_accuracy is not None and
+                    test_cost is not None and test_accuracy is not None):
+                    paired_points.append({
+                        "file": point.get("file", "unknown"),
+                        "train_cost": train_cost,
+                        "train_accuracy": train_accuracy,
+                        "test_cost": test_cost,
+                        "test_accuracy": test_accuracy
+                    })
+            
+            print(f"  ✅ Loaded {len(paired_points)} paired (train+test) points from MCTS")
+            print(paired_points)
+        else:
+            print(f"  ⚠️  No MCTS pareto frontier found at {mcts_pareto_file}")
+            return {
+                "success": False,
+                "error": f"MCTS pareto frontier not found at {mcts_pareto_file}"
+            }
+        
+        if not paired_points:
+            return {
+                "success": False,
+                "error": "No valid paired (train+test) data found for MCTS"
+            }
+        
+        # Load original baseline accuracy from test_frontier_summary.json
+        original_accuracy = None
+        summary_file = base_output_dir / f"{dataset}_original_final" / "test_frontier_summary.json"
+        if summary_file.exists():
+            with open(summary_file, 'r') as f:
+                summary_data = json.load(f)
+            if "results" in summary_data and "original" in summary_data["results"]:
+                original_result = summary_data["results"]["original"]
+                if original_result.get("success") and "accuracy" in original_result:
+                    original_accuracy = original_result["accuracy"]
+                    print(f"  📊 Original baseline accuracy: {original_accuracy:.4f}")
+        
+        # Filter out pairs with train accuracy lower than original
+        if original_accuracy is not None:
+            before_count = len(paired_points)
+            paired_points = [p for p in paired_points if p["train_accuracy"] >= original_accuracy]
+            after_count = len(paired_points)
+            print(f"  📊 Filtered pairs: {before_count} → {after_count} (removed {before_count - after_count} below original)")
+        
+        if not paired_points:
+            return {
+                "success": False,
+                "error": "No valid paired points above original accuracy"
+            }
+        
+        # For blackvault, normalize accuracy by dividing by max accuracy
+        normalize_factor = 1.0
+        if dataset == "blackvault":
+            all_accuracies = []
+            for p in paired_points:
+                if p.get("train_accuracy") is not None:
+                    all_accuracies.append(p["train_accuracy"])
+                if p.get("test_accuracy") is not None:
+                    all_accuracies.append(p["test_accuracy"])
+            if all_accuracies:
+                normalize_factor = max(all_accuracies)
+                print(f"📊 Normalizing accuracy for blackvault: dividing by max accuracy = {normalize_factor:.4f}")
+        
+        # Filter valid paired points
+        valid_pairs = [p for p in paired_points 
+                      if p["train_accuracy"] != 0 and p["train_cost"] != 0
+                      and p["test_accuracy"] != 0 and p["test_cost"] != 0]
+        
+        if not valid_pairs:
+            return {
+                "success": False,
+                "error": "No valid paired points after filtering"
+            }
+        
+        # Sort plans by train accuracy (descending) to determine rank
+        # Rank 1 = highest train accuracy
+        sorted_pairs = sorted(valid_pairs, key=lambda x: x["train_accuracy"], reverse=True)
+        for rank, p in enumerate(sorted_pairs, 1):
+            p["rank"] = rank
+        
+        # 15 distinct colors (matching the style of adv graphs)
+        RANK_COLORS = [
+            "#3498db",  # 1. blue (like MOAR)
+            "#2ecc71",  # 2. green (like Simple agent)
+            "#ff0b50",  # 3. pink/magenta (like PZ)
+            "#c27cf3",  # 4. light purple (like LOTUS)
+            "#ff9500",  # 5. orange (like DocETL-V1)
+            "#ffd700",  # 6. gold (like User-specified)
+            "#1abc9c",  # 7. teal
+            "#e74c3c",  # 8. red
+            "#9b59b6",  # 9. purple
+            "#00cec9",  # 10. cyan
+            "#f39c12",  # 11. amber
+            "#74b9ff",  # 12. light blue
+            "#fd79a8",  # 13. rose pink
+            "#a29bfe",  # 14. periwinkle
+            "#55efc4",  # 15. mint
+        ]
+        
+        def darken_color(hex_color, factor=0.6):
+            """Darken a hex color by a factor (0-1, lower = darker)"""
+            hex_color = hex_color.lstrip('#')
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            r = int(r * factor)
+            g = int(g * factor)
+            b = int(b * factor)
+            return f'#{r:02x}{g:02x}{b:02x}'
+        
+        num_plans = len(sorted_pairs)
+        
+        # Assign colors to ranks (cycle through if more than 15 plans)
+        rank_colors = {}
+        rank_edge_colors = {}
+        for p in sorted_pairs:
+            rank = p["rank"]
+            color_idx = (rank - 1) % len(RANK_COLORS)
+            rank_colors[rank] = RANK_COLORS[color_idx]
+            rank_edge_colors[rank] = darken_color(RANK_COLORS[color_idx], 0.6)
+        
+        # Create the plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Draw lines connecting each train-test pair (use rank color for lines too)
+        for p in sorted_pairs:
+            train_cost = p["train_cost"]
+            train_acc = p["train_accuracy"] / normalize_factor
+            test_cost = p["test_cost"]
+            test_acc = p["test_accuracy"] / normalize_factor
+            rank = p["rank"]
+            edge_color = rank_edge_colors[rank]
+            
+            # Draw line connecting train to test for this plan (use darker edge color)
+            ax.plot([train_cost, test_cost], [train_acc, test_acc],
+                   color=edge_color, linewidth=1.5, alpha=0.5, zorder=1,
+                   linestyle='-')
+        
+        # Plot points for each plan with rank-based color and shape-based train/test distinction
+        # Train = circle (o), Test = triangle (^)
+        for p in sorted_pairs:
+            rank = p["rank"]
+            color = rank_colors[rank]
+            edge_color = rank_edge_colors[rank]
+            
+            train_cost = p["train_cost"]
+            train_acc = p["train_accuracy"] / normalize_factor
+            test_cost = p["test_cost"]
+            test_acc = p["test_accuracy"] / normalize_factor
+            
+            # Plot train point (circle)
+            ax.scatter([train_cost], [train_acc], 
+                      color=color,
+                      s=450, alpha=0.4, edgecolors=edge_color, linewidth=1, zorder=3,
+                      marker='o')
+            
+            # Plot test point (triangle)
+            ax.scatter([test_cost], [test_acc], 
+                      color=color,
+                      s=450, alpha=0.4, edgecolors=edge_color, linewidth=1, zorder=3,
+                      marker='^')
+        
+        # Create custom legend entries
+        # Shape legend for train vs test (using neutral gray with darker edge)
+        legend_gray = '#808080'
+        legend_edge = '#4d4d4d'
+        train_legend = ax.scatter([], [], color=legend_gray, s=300, marker='o', 
+                                  edgecolors=legend_edge, linewidth=1, alpha=0.4, label='Train')
+        test_legend = ax.scatter([], [], color=legend_gray, s=300, marker='^', 
+                                 edgecolors=legend_edge, linewidth=1, alpha=0.4, label='Test')
+        
+        legend_handles = [train_legend, test_legend]
+        
+        # Set y-axis scale to 0-1
+        ax.set_ylim(0, 1)
+        
+        # Set log scale for x-axis (cost)
+        ax.set_xscale('log')
+        
+        # Get the range of costs to set appropriate ticks
+        all_costs = []
+        for p in valid_pairs:
+            all_costs.append(p["train_cost"])
+            all_costs.append(p["test_cost"])
+        
+        # Filter out infinite and NaN values
+        filtered_costs = []
+        for cost in all_costs:
+            try:
+                cost_float = float(cost)
+                if np.isfinite(cost_float) and cost_float > 0:
+                    filtered_costs.append(cost_float)
+            except (ValueError, TypeError):
+                continue
+        all_costs = filtered_costs
+        
+        if all_costs:
+            min_cost = min(all_costs)
+            max_cost = max(all_costs)
+            
+            # Set x-axis limits with some padding
+            ax.set_xlim(min_cost * 0.8, max_cost * 1.2)
+            
+            # Create explicit ticks based on the data range
+            min_order = np.floor(np.log10(min_cost * 0.8))
+            max_order = np.ceil(np.log10(max_cost * 1.2))
+            
+            if not np.isfinite(min_order) or not np.isfinite(max_order):
+                min_order = -2
+                max_order = 2
+                ax.set_xlim(0.01, 100)
+            
+            # Create ticks at powers of 10 and some intermediate values
+            tick_values = []
+            for exp in range(int(min_order), int(max_order) + 1):
+                tick_values.extend([10**exp, 2*10**exp, 5*10**exp])
+            tick_values = [t for t in tick_values if min_cost * 0.8 <= t <= max_cost * 1.2]
+            
+            ax.set_xticks(tick_values)
+            
+            # Format labels
+            def format_func(value, tick_number):
+                if value >= 1:
+                    return f'${value:.0f}'
+                elif value >= 0.1:
+                    return f'${value:.1f}'
+                else:
+                    return f'${value:.2f}'
+            
+            ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_func))
+        
+        # Labels and title
+        ax.set_xlabel('Cost ($) - Log Scale', fontsize=28)
+        ax.set_ylabel(f'{accuracy_metric.replace("_", " ").title()}', fontsize=28)
+        
+        # Map dataset names to proper titles
+        dataset_titles = {
+            'cuad': 'CUAD',
+            'game_reviews': 'Game Reviews', 
+            'blackvault': 'BlackVault',
+            'biodex': 'Biodex',
+            'medec': 'Medec',
+            'sustainability': 'Sustainability'
+        }
+        title = dataset_titles.get(dataset, dataset.upper())
+        ax.set_title(f'{title} - Train vs Test Comparison', fontsize=28, fontweight='bold')
+        
+        # Set tick label font size
+        ax.tick_params(axis='both', which='major', labelsize=28)
+        
+        # Add legend for shapes only (color explained by colorbar)
+        ax.legend(handles=legend_handles, fontsize=16, loc='lower right',
+                 title='Data Split', title_fontsize=14)
+        
+        # Add grid
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.grid(True, which='minor', alpha=0.1, linestyle=':')
+        
+        # Tight layout
+        plt.tight_layout()
+        
+        # Save the plot
+        plot_filename = "train_test_comparison_plot.pdf"
+        plot_path = base_output_dir / f"{dataset}_original_final" / plot_filename
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"📈 Train vs test comparison plot saved to: {plot_path}")
+        
+        # Print rank information
+        print("\n📊 Plan Rankings (by Train Accuracy):")
+        for p in sorted_pairs:
+            print(f"   #{p['rank']}: {p['file']} - Train: {p['train_accuracy']:.4f}, Test: {p['test_accuracy']:.4f}")
+        
+        # Calculate generalization metrics
+        print("\n" + "="*60)
+        print("GENERALIZATION METRICS")
+        print("="*60)
+        
+        train_accs = np.array([p["train_accuracy"] for p in valid_pairs])
+        test_accs = np.array([p["test_accuracy"] for p in valid_pairs])
+        
+        # 1. Mean difference (test - train): positive = test better, negative = train better
+        diffs = test_accs - train_accs
+        mean_diff = np.mean(diffs)
+        std_diff = np.std(diffs)
+        
+        # 2. Mean relative difference (% change from train to test)
+        rel_diffs = (test_accs - train_accs) / train_accs * 100
+        mean_rel_diff = np.mean(rel_diffs)
+        std_rel_diff = np.std(rel_diffs)
+        
+        # Print metrics
+        print(f"Number of plans compared: {len(valid_pairs)}")
+        print(f"\n📊 Mean Difference (test - train):")
+        print(f"   Mean: {mean_diff:+.4f}")
+        print(f"   Std:  {std_diff:.4f}")
+        
+        print(f"\n📊 Mean Relative Difference (% change from train to test):")
+        print(f"   Mean: {mean_rel_diff:+.2f}%")
+        print(f"   Std:  {std_rel_diff:.2f}%")
+        
+        print("="*60)
+        
+        # Store metrics
+        generalization_metrics = {
+            "num_plans": len(valid_pairs),
+            "mean_diff": float(mean_diff),
+            "std_diff": float(std_diff),
+            "mean_rel_diff_pct": float(mean_rel_diff),
+            "std_rel_diff_pct": float(std_rel_diff)
+        }
+        
+        # Commit changes to Modal volume
+        volume.commit()
+        
+        return {
+            "success": True,
+            "plot_path": str(plot_path),
+            "paired_points": len(paired_points),
+            "generalization_metrics": generalization_metrics
+        }
+        
+    except Exception as e:
+        print(f"❌ Error generating train vs test comparison plot: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_dotenv()],
+    volumes={VOLUME_MOUNT_PATH: volume},
+    timeout=60 * 30
+)
 def generate_legend_plot() -> Dict[str, Any]:
     """
     Generate a standalone horizontal legend plot with all possible methods and markers.
@@ -1536,6 +2276,8 @@ def generate_legend_plot() -> Dict[str, Any]:
             "simple_baseline": "#2ecc71",    # Green
             "mcts": "#3498db",               # Bright blue
             "mcts_kimi": "#e74c3c",          # Bright Red
+            "mcts_llama": "#9b59b6",         # Purple
+            "mcts_old_directive": "#1abc9c", # Teal
             "lotus": "#c27cf3",              # Light purple
             "PZ_direct": "#ff0b50",          # Pink/magenta
             "PZ_retrieval": "#ff0b50",       # Pink/magenta (same as PZ_direct)
@@ -1551,6 +2293,8 @@ def generate_legend_plot() -> Dict[str, Any]:
             {"key": "original", "label": "User-specified plan", "marker": "*", "size": 700},
             {"key": "mcts", "label": "MOAR", "marker": "o", "size": 450},
             {"key": "mcts_kimi", "label": "MOAR-Kimi", "marker": "D", "size": 500},
+            {"key": "mcts_llama", "label": "MOAR-Llama", "marker": "s", "size": 500},
+            {"key": "mcts_old_directive", "label": "MOAR-OldDirective", "marker": "p", "size": 500},
             {"key": "simple_baseline", "label": "Simple agent", "marker": "o", "size": 450},
             {"key": "PZ", "label": "PZ", "marker": "o", "size": 450},
             {"key": "lotus", "label": "LOTUS", "marker": "o", "size": 450},
@@ -1803,6 +2547,9 @@ def run_all_test_frontiers(dataset: str, adv_graph: bool = False) -> Dict[str, A
         "original": [],
         "simple_baseline": [],
         "mcts": [],
+        "mcts_kimi": [],
+        "mcts_llama": [],
+        "mcts_old_directive": [],
         "lotus": [],
         "PZ": [],
         "PZ_retrieval": [],
@@ -2267,6 +3014,9 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
             "original": [],
             "simple_baseline": [],
             "mcts": [],
+            "mcts_kimi": [],
+            "mcts_llama": [],
+            "mcts_old_directive": [],
             "lotus": [],
             "PZ_direct": [],
             "PZ_retrieval": [],
@@ -2643,7 +3393,7 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
 
 
 @app.local_entrypoint()
-def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False, legend_only: bool = False, adv_graph: bool = False):
+def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False, legend_only: bool = False, adv_graph: bool = False, compare: bool = False, compare_number_all: bool = False):
     """
     Main entrypoint for running test frontier evaluation.
     
@@ -2655,7 +3405,47 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
         tradeoff: If True, only run the top 2 accuracy tradeoff analysis for MCTS across all datasets
         legend_only: If True, only generate the standalone legend plot
         adv_graph: If True, only show Pareto frontier points and connect MCTS points with lines
+        compare: If True, generate a plot comparing MOAR train vs test results
+        compare_number_all: If True, print generalization metrics for all datasets (no plots)
     """
+    if compare_number_all:
+        # Calculate and print generalization metrics for all datasets
+        print(f"\n📊 Calculating generalization metrics for all datasets...")
+        result = calculate_generalization_metrics_all.remote()
+        if result["success"]:
+            print(f"\n✅ Generalization metrics calculated successfully!")
+            if result["overall_mean_diff"] is not None:
+                print(f"   Overall mean diff: {result['overall_mean_diff']:+.4f}")
+                print(f"   Overall mean rel diff: {result['overall_mean_rel_diff_pct']:+.2f}%")
+        else:
+            print(f"❌ Failed: {result.get('error', 'Unknown error')}")
+        return
+    
+    if compare:
+        # Generate train vs test comparison plot for MOAR only
+        if dataset not in DATASETS + ["all"]:
+            print(f"❌ Invalid dataset: {dataset}")
+            print(f"   Valid options: {', '.join(DATASETS + ['all'])}")
+            return
+        
+        datasets_to_compare = DATASETS if dataset == "all" else [dataset]
+        for dataset_name in datasets_to_compare:
+            print(f"\n📊 Generating train vs test comparison plot for {dataset_name}...")
+            compare_result = generate_train_test_comparison_plot.remote(dataset_name)
+            if compare_result["success"]:
+                print(f"✅ Comparison plot saved to: {compare_result['plot_path']}")
+                print(f"   Paired points: {compare_result['paired_points']}")
+                if "generalization_metrics" in compare_result:
+                    metrics = compare_result["generalization_metrics"]
+                    print(f"   Generalization metrics:")
+                    print(f"     - Mean diff (test - train): {metrics['mean_diff']:+.4f}")
+                    print(f"     - Std diff (test - train): {metrics['std_diff']:+.4f}")
+                    print(f"     - Mean rel diff: {metrics['mean_rel_diff_pct']:+.2f}%")
+                    print(f"     - Std rel diff: {metrics['std_rel_diff_pct']:+.2f}%")
+            else:
+                print(f"❌ Failed to generate comparison plot: {compare_result.get('error', 'Unknown error')}")
+        return
+    
     if legend_only:
         # Generate standalone legend plot
         print(f"\n📊 Generating standalone legend plot...")

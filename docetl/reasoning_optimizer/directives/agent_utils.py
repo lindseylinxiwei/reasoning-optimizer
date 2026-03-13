@@ -11,9 +11,11 @@ from docetl.operations.utils.llm import count_tokens
 
 
 KIMI_K2_MODEL = "together_ai/moonshotai/Kimi-K2-Thinking"
+KIMI_K2_5_MODEL = "together_ai/moonshotai/Kimi-K2.5"
 QWEN2_5_7B_MODEL = "together_ai/Qwen/Qwen2.5-7B-Instruct-Turbo"
-
-TOGETHER_MODELS = {KIMI_K2_MODEL, QWEN2_5_7B_MODEL}
+LLAMA_4_MAVERICK_17B_128E_INSTRUCT_FP8_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+LLAMA_3_1_8B_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+TOGETHER_MODELS = {KIMI_K2_MODEL, QWEN2_5_7B_MODEL, LLAMA_4_MAVERICK_17B_128E_INSTRUCT_FP8_MODEL, LLAMA_3_1_8B_MODEL, KIMI_K2_5_MODEL}
 
 # Cost per million tokens for Together AI models
 # Reference: https://www.together.ai/pricing
@@ -22,9 +24,22 @@ TOGETHER_MODEL_COSTS = {
         "input_cost_per_token": 0.60 / 1_000_000,  # $0.60 per 1M input tokens
         "output_cost_per_token": 2.00 / 1_000_000,  # $2.00 per 1M output tokens
     },
+
     QWEN2_5_7B_MODEL: {
         "input_cost_per_token": 0.30 / 1_000_000,  # $0.30 per 1M input tokens
         "output_cost_per_token": 0.30 / 1_000_000,  # $0.30 per 1M output tokens
+    },
+    LLAMA_4_MAVERICK_17B_128E_INSTRUCT_FP8_MODEL: {
+        "input_cost_per_token": 0.2 / 1_000_000,  # $0.2 per 1M input tokens
+        "output_cost_per_token": 0.2 / 1_000_000,  # $0.2 per 1M output tokens
+    },
+    LLAMA_3_1_8B_MODEL: {
+        "input_cost_per_token": 0.18 / 1_000_000,  # $0.18 per 1M input tokens
+        "output_cost_per_token": 0.18 / 1_000_000,  # $0.18 per 1M output tokens
+    },
+    KIMI_K2_5_MODEL : {
+        "input_cost_per_token": 0.50 / 1_000_000,  # $0.50 per 1M input tokens
+        "output_cost_per_token": 2.80 / 1_000_000,  # $2.80 per 1M output tokens
     },
 }
 
@@ -72,108 +87,6 @@ def _normalize_together_model(model: str) -> str:
     raise ValueError(f"Together AI model must start with 'together_ai/' prefix, got: {model}")
 
 
-# Context window limits for Together AI models
-TOGETHER_MODEL_CONTEXT_LIMITS = {
-    KIMI_K2_MODEL: 262144,  # 256K context
-    QWEN2_5_7B_MODEL: 131072,  # 128K context
-}
-TOGETHER_DEFAULT_CONTEXT_LIMIT = 32768
-
-# Minimum output tokens to reserve for response
-MIN_OUTPUT_TOKENS = 1000
-
-
-def _get_together_context_limit(model: str) -> int:
-    """Get the context window limit for a Together AI model."""
-    return TOGETHER_MODEL_CONTEXT_LIMITS.get(model, TOGETHER_DEFAULT_CONTEXT_LIMIT)
-
-
-def _truncate_messages_for_context(
-    messages: List[Dict], 
-    max_input_tokens: int,
-    model: str = "gpt-4.1-mini"
-) -> List[Dict]:
-    """
-    Truncate messages to fit within the input token limit.
-    Preserves system message and latest user message, truncates middle content.
-    
-    Args:
-        messages: List of message dicts
-        max_input_tokens: Maximum tokens allowed for input
-        model: Model for token counting
-    
-    Returns:
-        Truncated list of messages
-    """
-    if not messages:
-        return messages
-    
-    # Calculate current token count
-    total_tokens = sum(estimate_token_count(msg.get("content", ""), model) for msg in messages)
-    
-    if total_tokens <= max_input_tokens:
-        return messages
-    
-    rprint(f"[dim]⚠️ Input too long ({total_tokens} tokens), truncating to fit {max_input_tokens} tokens[/dim]")
-    
-    # Make a copy to avoid modifying original
-    messages = [m.copy() for m in messages]
-    
-    # Keep system message (first) and latest message (last)
-    truncated = []
-    system_msg = None
-    if messages[0].get("role") == "system":
-        system_msg = messages[0]
-        remaining = messages[1:]
-    else:
-        remaining = messages
-    
-    # Always keep the latest message
-    latest_msg = remaining[-1] if remaining else None
-    middle_msgs = remaining[:-1] if remaining else []
-    
-    # Calculate tokens for preserved messages
-    system_tokens = estimate_token_count(system_msg.get("content", ""), model) if system_msg else 0
-    latest_tokens = estimate_token_count(latest_msg.get("content", ""), model) if latest_msg else 0
-    
-    # Available tokens for middle messages
-    available_for_middle = max_input_tokens - system_tokens - latest_tokens - 500  # buffer
-    
-    # Add middle messages from most recent backwards until we hit the limit
-    kept_middle = []
-    current_tokens = 0
-    for msg in reversed(middle_msgs):
-        msg_tokens = estimate_token_count(msg.get("content", ""), model)
-        if current_tokens + msg_tokens <= available_for_middle:
-            kept_middle.insert(0, msg)
-            current_tokens += msg_tokens
-        else:
-            # Try to truncate this message to fit remaining space
-            remaining_space = available_for_middle - current_tokens
-            if remaining_space > 500:  # Only truncate if meaningful space left
-                content = msg.get("content", "")
-                # Estimate chars per token and truncate
-                chars_per_token = len(content) / max(1, msg_tokens)
-                target_chars = int(remaining_space * chars_per_token * 0.9)  # 90% to be safe
-                truncated_content = content[:target_chars] + "\n... [content truncated due to context limit]"
-                truncated_msg = msg.copy()
-                truncated_msg["content"] = truncated_content
-                kept_middle.insert(0, truncated_msg)
-            break
-    
-    # Reconstruct messages
-    if system_msg:
-        truncated.append(system_msg)
-    truncated.extend(kept_middle)
-    if latest_msg:
-        truncated.append(latest_msg)
-    
-    new_total = sum(estimate_token_count(msg.get("content", ""), model) for msg in truncated)
-    rprint(f"[dim]📝 Truncated messages from {total_tokens} to {new_total} tokens ({len(messages)} -> {len(truncated)} messages)[/dim]")
-    
-    return truncated
-
-
 def _together_completion(
     model: str,
     messages: List[Dict],
@@ -211,35 +124,12 @@ def _together_completion(
         else:
             messages.insert(0, {"role": "system", "content": schema_instruction})
     
-    # Get context limit and calculate token budget
-    context_limit = _get_together_context_limit(model)
-    
-    # Reserve tokens for output (use requested max_tokens but cap at reasonable limit)
-    output_token_budget = min(max_tokens, context_limit // 2)  # At most half the context for output
-    output_token_budget = max(output_token_budget, MIN_OUTPUT_TOKENS)  # At least MIN_OUTPUT_TOKENS
-    
-    # Calculate max input tokens
-    max_input_tokens = context_limit - output_token_budget - 100  # 100 token safety buffer
-    
-    # Truncate messages if input is too long
-    messages = _truncate_messages_for_context(messages, max_input_tokens)
-    
-    # Recalculate actual input tokens after truncation
-    input_tokens = sum(estimate_token_count(msg.get("content", "")) for msg in messages)
-    
-    # Final check: adjust output tokens if still needed
-    available_tokens = context_limit - input_tokens - 100
-    effective_max_tokens = max(MIN_OUTPUT_TOKENS, min(max_tokens, available_tokens))
-    
-    if effective_max_tokens < max_tokens:
-        rprint(f"[dim]⚠️ Setting max_tokens to {effective_max_tokens} ({input_tokens} input tokens, {context_limit} context limit)[/dim]")
-    
     # Call via litellm (no response_format since Kimi doesn't support it)
     response = litellm_completion(
         model=litellm_model,
         messages=messages,
         temperature=temperature,
-        max_tokens=effective_max_tokens,
+        max_tokens=max_tokens,
     )
     
     # Get token usage from response

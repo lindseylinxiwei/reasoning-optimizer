@@ -841,7 +841,6 @@ class MCTS:
                     }
                     instantiation_messages.append(variation_msg)
 
-                
                 new_ops_list, updated_message_history, cost = directive.instantiate(
                     operators=node.parsed_yaml["operations"],
                     target_ops=target_op_list,
