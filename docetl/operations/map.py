@@ -118,6 +118,13 @@ class MapOperation(BaseOperation):
             "max_batch_size", kwargs.get("max_batch_size", None)
         )
         self.clustering_method = "random"
+        model = self.config.get("model") or self.default_model
+        if model == "jev" or model.startswith("jev-"):
+            from docetl.operations.utils.jev import build_questions
+
+            build_questions(self.config["output"]["schema"])
+            if any(self.config.get(key) for key in ("batch_prompt", "calibrate", "gleaning", "tools", "pdf_url_key")):
+                raise ValueError("Jev supports text classification without batching prompts, calibration, gleaning, or tools")
 
     def _generate_calibration_context(self, input_data: list[dict]) -> str:
         """

@@ -80,3 +80,6 @@ node_modules/*
 
 reaction_index/
 *experiments/reasoning/othersystems/biodex/.chroma-biodex/
+
+# Local Netlify folder
+.netlify

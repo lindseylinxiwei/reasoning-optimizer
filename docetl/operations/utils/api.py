@@ -481,6 +481,18 @@ class APIWrapper(object):
         Raises:
             TimeoutError: If the call times out after retrying.
         """
+        if model == "jev" or model.startswith("jev-"):
+            from .jev import call_jev
+
+            if op_type != "map" or op_config.get("type", "map") not in ("map", "filter"):
+                raise ValueError("Jev currently supports map and filter operators only")
+            if tools or scratchpad or gleaning_config or initial_result is not None:
+                raise ValueError("Jev does not support tools, scratchpads, gleaning, or batch refinement")
+            return call_jev(
+                model, messages, output_schema, timeout=timeout_seconds,
+                bypass_cache=bypass_cache, validation_config=validation_config,
+            )
+
         # Determine output mode using central enum
         output_mode_str = op_config.get("output", {}).get(
             "mode", OutputMode.TOOLS.value

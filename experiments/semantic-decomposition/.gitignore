@@ -1,0 +1,7 @@
+sustainability_*_short.json
+selection_*.json
+results_*.json
+.netlify/
+node_modules/
+.env
+runs/
