@@ -2,6 +2,11 @@
 
 This folder contains experiments for the DocETL reasoning optimizer, which uses AI agents and Monte Carlo Tree Search (MCTS) to automatically optimize document processing pipelines.
 
+## Jev directive selection
+
+See [JEV.md](JEV.md) to use Jev for directive selection while keeping the existing
+LLM for instantiation, including local, Modal, and batch experiment settings.
+
 ## Running Experiments
 
 ### CUAD Experiments

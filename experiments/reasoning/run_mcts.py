@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 
 from docetl.mcts import MCTS, Node, ParetoFrontier
+from docetl.mcts.jev_selector import DEFAULT_JEV_MODEL, DEFAULT_INPUT_PRICE
 from docetl.reasoning_optimizer.directives import (
     DEFAULT_MODEL, DEFAULT_OUTPUT_DIR, ALL_DIRECTIVES
 )
@@ -84,6 +85,9 @@ def run_mcts_remote(
     ground_truth_path: str | None = None,
     original_query_result: Dict[str, Any] | None = None,
     build_first_layer: Optional[bool] = False,
+    selector_backend: str = "llm",
+    jev_model: str = DEFAULT_JEV_MODEL,
+    jev_input_price: float = DEFAULT_INPUT_PRICE,
 ):
     os.environ["EXPERIMENT_OUTPUT_DIR"] = str(Path(VOLUME_MOUNT_PATH) / "outputs")
     resolved_output_dir = _resolve_in_volume(output_dir) if output_dir else None
@@ -104,6 +108,9 @@ def run_mcts_remote(
         ground_truth_path=ground_truth_path,
         original_query_result=original_query_result,
         build_first_layer=build_first_layer,
+        selector_backend=selector_backend,
+        jev_model=jev_model,
+        jev_input_price=jev_input_price,
     )
     volume.commit()
     return results
@@ -122,6 +129,9 @@ def modal_main_mcts(
     dataset: str = "cuad",
     ground_truth: str | None = None,
     build_first_layer: bool = False,
+    selector_backend: str = "llm",
+    jev_model: str = DEFAULT_JEV_MODEL,
+    jev_input_price: float = DEFAULT_INPUT_PRICE,
 ):
     # Note: original_query_result cannot be passed via CLI, so it's not included here.
     # Use programmatic calls to run_mcts_remote if you need to pass original_query_result.
@@ -138,6 +148,9 @@ def modal_main_mcts(
         ground_truth_path=ground_truth,
         original_query_result=None,
         build_first_layer=build_first_layer,
+        selector_backend=selector_backend,
+        jev_model=jev_model,
+        jev_input_price=jev_input_price,
     )
 
 
@@ -154,6 +167,9 @@ def run_mcts_experiment(
     ground_truth_path: str | None = None,
     original_query_result: Dict[str, Any] | None = None,
     build_first_layer: Optional[bool] = False,
+    selector_backend: str = "llm",
+    jev_model: str = DEFAULT_JEV_MODEL,
+    jev_input_price: float = DEFAULT_INPUT_PRICE,
 ):
     """
     Run MCTS optimization experiment with specified parameters.
@@ -221,6 +237,9 @@ def run_mcts_experiment(
         output_dir=str(output_path),
         original_query_result=original_query_result,
         build_first_layer=build_first_layer,
+        selector_backend=selector_backend,
+        jev_model=jev_model,
+        jev_input_price=jev_input_price,
     )
     print(f"✅ MCTS initialized with root node: {yaml_path}")
     # Run MCTS optimization
@@ -256,6 +275,12 @@ def run_mcts_experiment(
         "experiment_name": experiment_name,
         "input_pipeline": yaml_path,
         "model": model,
+        "selector_backend": selector_backend,
+        "jev_model": jev_model if selector_backend == "jev" else None,
+        "jev_input_price_per_million": jev_input_price if selector_backend == "jev" else None,
+        "jev_selection_calls": len(mcts.selector_calls),
+        "jev_selection_cost": sum(r["estimated_cost_usd"] for r in mcts.selector_calls),
+        "total_search_cost": mcts.total_search_cost,
         "max_iterations": max_iterations,
         "exploration_weight": exploration_weight,
         "data_dir": data_dir,
@@ -341,6 +366,11 @@ Examples:
     parser.add_argument("--dataset", type=str, default="cuad", help="Dataset name for evaluation (default: cuad)")
     parser.add_argument("--ground_truth", type=str, help="Path to ground-truth file (if not default)")
     
+    parser.add_argument("--selector_backend", choices=["llm", "jev"], default="llm",
+                        help="Model backend for directive selection only")
+    parser.add_argument("--jev_model", default=DEFAULT_JEV_MODEL)
+    parser.add_argument("--jev_input_price", type=float, default=DEFAULT_INPUT_PRICE,
+                        help="Jev input price in USD per million tokens (output is free)")
     args = parser.parse_args()
     
     result = run_mcts_experiment(
@@ -354,6 +384,9 @@ Examples:
         model=args.model,
         dataset=args.dataset,
         ground_truth_path=args.ground_truth,
+        selector_backend=args.selector_backend,
+        jev_model=args.jev_model,
+        jev_input_price=args.jev_input_price,
     )
     
     print("\n🎉 MCTS experiment completed successfully!")

@@ -29,6 +29,7 @@ from docetl.reasoning_optimizer.directives.change_model_cost import (
 )
 from docetl.reasoning_optimizer.op_descriptions import *
 from docetl.utils import extract_output_from_json
+from .jev_selector import JevSelector, JevAPIError, DEFAULT_JEV_MODEL, DEFAULT_INPUT_PRICE
 from .Node import Node
 from .ParetoFrontier import ParetoFrontier
 from .mcts_utils import *
@@ -76,6 +77,9 @@ class MCTS:
         output_dir: Optional[str] = None,
         original_query_result: Optional[Dict[str, Any]] = None,
         build_first_layer: Optional[bool] = False,
+        selector_backend: str = "llm",
+        jev_model: str = DEFAULT_JEV_MODEL,
+        jev_input_price: float = DEFAULT_INPUT_PRICE,
     ):
         """
         Initialize the MCTS algorithm with Pareto frontier integration.
@@ -91,6 +95,14 @@ class MCTS:
             original_query_result: Pre-executed original query result to avoid re-execution
         """
 
+        if selector_backend not in {"llm", "jev"}:
+            raise ValueError("selector_backend must be 'llm' or 'jev'")
+        self.selector_backend = selector_backend
+        self.jev_selector = (
+            JevSelector(model=jev_model, input_price=jev_input_price)
+            if selector_backend == "jev" else None
+        )
+        self.selector_calls = []
         self.root = Node(root_yaml_path, c=exploration_constant)
         self.tree_lock = threading.RLock()
         self.max_concurrent_agents = 3
@@ -167,6 +179,9 @@ class MCTS:
         
         # Track total cost for all completion calls during search
         self.total_search_cost = 0.0
+        
+        # Track if action space is exhausted for early termination
+        self.action_space_exhausted = False
 
         if build_first_layer:
             print("🔄 Building first layer of the pipeline manually...")
@@ -317,6 +332,8 @@ class MCTS:
                             with self.tree_lock:
                                 self.iteration_count += 1
                                 print(f"Updated iteration_count to {self.iteration_count}")
+                    except JevAPIError:
+                        raise
                     except Exception as e:
                         print(f"Agent failed with error: {e}")
                     
@@ -375,27 +392,50 @@ class MCTS:
                     acc_children =self.expand(leaf,"acc")
                     has_leaf_acc = 1
                     print("HAS LEAF ACC")
+                except JevAPIError:
+                    raise
                 except RuntimeError as e:
                     print(e)
+                    if "Action space may be exhausted" in str(e):
+                        print("Action space exhausted - terminating MCTS iteration")
+                        self.action_space_exhausted = True
+                        return False
                     has_leaf_acc= 0
                 try:
                     cost_children =self.expand(leaf,"cost")
                     has_leaf_cost = 1
                     print("HAS LEAF COST")
+                except JevAPIError:
+                    raise
                 except RuntimeError as e:
                     print(e)
+                    if "Action space may be exhausted" in str(e):
+                        print("Action space exhausted - terminating MCTS iteration")
+                        self.action_space_exhausted = True
+                        return False
                     has_leaf_cost= 0
             else: 
                 print(f"[Thread {thread_id}] node {leaf.get_id()} is NOT a FIRST LAYER NODE")
                 optimize_goal = self.get_optimize_goal(leaf)
-                if optimize_goal == "acc":
-                    acc_children = self.expand(leaf, optimize_goal="acc")
-                    has_leaf_acc = 1
+                try:
+                    if optimize_goal == "acc":
+                        acc_children = self.expand(leaf, optimize_goal="acc")
+                        has_leaf_acc = 1
+                        has_leaf_cost = 0  
+                    else:
+                        cost_children = self.expand(leaf, optimize_goal="cost")
+                        has_leaf_cost = 1
+                        has_leaf_acc = 0
+                except JevAPIError:
+                    raise
+                except RuntimeError as e:
+                    print(e)
+                    if "Action space may be exhausted" in str(e):
+                        print("Action space exhausted - terminating MCTS iteration")
+                        self.action_space_exhausted = True
+                        return False
+                    has_leaf_acc = 0
                     has_leaf_cost = 0  
-                else:
-                    cost_children = self.expand(leaf, optimize_goal="cost")
-                    has_leaf_cost = 1
-                    has_leaf_acc = 0  
 
 
         # 3. Simulation: Run simulations from the leaf
@@ -592,6 +632,16 @@ class MCTS:
         else:
             return "acc"
 
+    def _record_jev_call(self, node, goal, record):
+        record = dict(record, node_id=node.get_id(), optimize_goal=goal)
+        with self.tree_lock:
+            self.total_search_cost += record["estimated_cost_usd"]
+            self.selector_calls.append(record)
+            if self.output_dir:
+                Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+                with open(Path(self.output_dir) / "jev_selection_calls.jsonl", "a") as stream:
+                    stream.write(json.dumps(record) + "\n")
+
     def expand(self, node: Node, optimize_goal: str) -> List[Node]:
         """
         Expand a node with a specific optimization goal.
@@ -733,19 +783,30 @@ class MCTS:
 
         while retry_count < max_retries:
 
-            response, call_cost = agent_completion(
-                model=self.model,
-                messages=messages,
-                response_format=ExpandResponseFormat,
-            )
-            with self.tree_lock:
-                print(f"💰 Adding LLM call cost: ${call_cost:.4f} (total before: ${self.total_search_cost:.4f})")
-                self.total_search_cost += call_cost
-            reply = response.choices[0].message.content
+            if self.jev_selector is not None:
+                parsed_selection = self.jev_selector.select(
+                    messages=messages,
+                    action_options=action_options,
+                    directives=self.directive_name_to_obj,
+                    pipeline=node.parsed_yaml,
+                    goal=optimize_goal,
+                    on_call=lambda record: self._record_jev_call(node, optimize_goal, record),
+                )
+                reply = json.dumps(parsed_selection)
+            else:
+                response, call_cost = agent_completion(
+                    model=self.model,
+                    messages=messages,
+                    response_format=ExpandResponseFormat,
+                )
+                with self.tree_lock:
+                    print(f"💰 Adding LLM call cost: ${call_cost:.4f} (total before: ${self.total_search_cost:.4f})")
+                    self.total_search_cost += call_cost
+                reply = response.choices[0].message.content
 
             try:
                 # Handle both direct JSON and text with embedded JSON (for reasoning models)
-                if is_together_model(self.model):
+                if self.jev_selector is None and is_together_model(self.model):
                     parsed = _extract_json_from_text(reply)
                 else:
                     parsed = json.loads(reply)
@@ -965,6 +1026,11 @@ class MCTS:
             print(
                 f"Early stopping: No Pareto optimal plans found in last {self.iterations_without_improvement} iterations"
             )
+            return False
+        
+        # Early stopping: return False if action space is exhausted
+        if self.action_space_exhausted:
+            print("Early stopping: Action space exhausted, no more actions available")
             return False
 
         return True

@@ -151,6 +151,9 @@ def _spawn_mcts(
     ground_truth: Optional[str],
     original_query_result: Dict[str, Any],
     build_first_layer: Optional[bool] = False,
+    selector_backend: str = "llm",
+    jev_model: str = mcts_mod.DEFAULT_JEV_MODEL,
+    jev_input_price: float = mcts_mod.DEFAULT_INPUT_PRICE,
 ):
     # Uses mcts_mod.run_mcts_remote which is bound to the shared named volume
     return mcts_mod.run_mcts_remote.spawn(
@@ -166,6 +169,9 @@ def _spawn_mcts(
         ground_truth_path=ground_truth,
         original_query_result=original_query_result,
         build_first_layer=build_first_layer,
+        selector_backend=selector_backend,
+        jev_model=jev_model,
+        jev_input_price=jev_input_price,
     )
 
 
@@ -975,7 +981,10 @@ def run_from_config(config: Dict[str, Any]) -> int:
                 output_dir=output_dir,
                 ground_truth=ground_truth,
                 original_query_result=original_result,
-                build_first_layer=build_first_layer
+                build_first_layer=build_first_layer,
+                selector_backend=mcts_cfg.get("selector_backend", "llm"),
+                jev_model=mcts_cfg.get("jev_model", mcts_mod.DEFAULT_JEV_MODEL),
+                jev_input_price=float(mcts_cfg.get("jev_input_price", mcts_mod.DEFAULT_INPUT_PRICE)),
             )
             results.append((dataset, f"mcts:{mc_name}", call))
             print(f"Spawned MCTS for {dataset} as {mc_name}")
