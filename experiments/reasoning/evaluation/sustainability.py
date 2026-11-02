@@ -272,6 +272,10 @@ def name_match_score(output_name, gt_name):
     return best
 
 
+# The pipeline's filter keeps sustainability reports; only these are scored as targets.
+TARGET_DOCUMENT_CATEGORY = "Sustainability Report"
+
+
 def evaluate_results(method_name, results_file, ground_truth_file, original_json_file=None):
     """
     Evaluate sustainability analysis results against ground truth (corrected version).
@@ -286,9 +290,15 @@ def evaluate_results(method_name, results_file, ground_truth_file, original_json
       3. Each input report counts once. Duplicate entries for the same company cannot
          inflate accuracy, and a report listed under several activities is correct only if
          every listing has the GT activity.
-      4. The denominator is the number of input reports, so reports the pipeline drops
-         (e.g. in a filter) count as misses. Without original_json_file, every GT record is a
-         candidate and the denominator is matched reports plus unmatched output entries.
+      4. Only what the pipeline's filter is meant to keep is scored. Targets are input reports
+         whose GT document_category is "Sustainability Report"; name and activity accuracy are
+         computed over them. A non-target report (annual, financial, ...) that reaches the
+         output adds one to the denominator with no credit, so letting it through lowers the
+         score and filtering it out costs nothing. The original counted every input report,
+         which penalized a filter for removing annual reports correctly.
+         Denominator = target reports + non-target reports in the output. GT records without a
+         document_category are treated as targets. Without original_json_file, every GT record
+         is a candidate and unmatched output entries are added to the denominator.
 
     The returned keys match the original (economic_activity_accuracy is MOAR's search
     metric for this workload, combined_score is used for the reported Pareto frontier).
@@ -307,6 +317,9 @@ def evaluate_results(method_name, results_file, ground_truth_file, original_json
     else:
         reports = list(ground_truth_data)
 
+    def is_target(report):
+        return report.get("GT document_category", TARGET_DOCUMENT_CATEGORY).strip() == TARGET_DOCUMENT_CATEGORY
+
     credited = {}  # report id -> list of predicted activities
     findings_lengths = []
     unmatched_entries = 0
@@ -323,37 +336,48 @@ def evaluate_results(method_name, results_file, ground_truth_file, original_json
             if best_score < 0.5:
                 unmatched_entries += 1
                 continue
-            # Several reports can share a company name; prefer one not yet credited.
+            # Several reports can share a company name (e.g. a company's annual and
+            # sustainability report). Prefer one not yet credited, then a target report, since
+            # the name alone cannot tell them apart and the pipeline only outputs reports it
+            # judged to be sustainability reports.
             tied = [r for s, r in scored if s == best_score]
-            target = next((r for r in tied if r["id"] not in credited), tied[0])
-            credited.setdefault(target["id"], []).append(predicted_activity)
+            match = min(tied, key=lambda r: (r["id"] in credited, not is_target(r)))
+            credited.setdefault(match["id"], []).append(predicted_activity)
             if entry.get("key_findings"):
                 findings_lengths.append(len(entry["key_findings"]))
 
+    targets = [r for r in reports if is_target(r)]
+    leaked = [r for r in reports if not is_target(r) and r["id"] in credited]
+    found_targets = [r for r in targets if r["id"] in credited]
     if original_json_file:
-        total = len(reports)
+        total = len(targets) + len(leaked)
     else:
-        total = len(credited) + unmatched_entries
+        total = len(found_targets) + len(leaked) + unmatched_entries
 
     activity_correct = 0
     distribution = defaultdict(int)
-    for report in reports:
-        predictions = credited.get(report["id"])
-        if not predictions:
-            continue
+    for report in found_targets:
         gt_activity = report.get("GT economic_activity", "").strip()
         distribution[gt_activity] += 1
-        if set(predictions) == {gt_activity}:
+        if set(credited[report["id"]]) == {gt_activity}:
             activity_correct += 1
 
-    not_other = [r for r in reports if r.get("GT economic_activity", "").strip() != "other"]
+    not_other = [r for r in targets if r.get("GT economic_activity", "").strip() != "other"]
     metrics = {
         "economic_activity_accuracy": activity_correct / total if total else 0.0,
-        "company_name_accuracy": len(credited) / total if total else 0.0,
-        "combined_score": (activity_correct + len(credited)) / (2 * total) if total else 0.0,
+        "company_name_accuracy": len(found_targets) / total if total else 0.0,
+        "combined_score": (activity_correct + len(found_targets)) / (2 * total) if total else 0.0,
         "total_companies_processed": total,
         "economic_activity_distribution": distribution,
-        "missing_companies": len(reports) - len(credited),
+        "missing_companies": len(targets) - len(found_targets),
+        # Filter diagnostics
+        "target_reports": len(targets),
+        "non_target_reports": len(reports) - len(targets),
+        "non_target_reports_in_output": len(leaked),
+        "filter_recall": len(found_targets) / len(targets) if targets else 0.0,
+        "filter_precision": (
+            len(found_targets) / (len(found_targets) + len(leaked)) if found_targets or leaked else 0.0
+        ),
         "avg_findings_length": float(np.mean(findings_lengths)) if findings_lengths else 0.0,
         "total_economic_activities": len(distribution),
         "most_common_activity": max(distribution.items(), key=lambda x: x[1])[0] if distribution else None,
