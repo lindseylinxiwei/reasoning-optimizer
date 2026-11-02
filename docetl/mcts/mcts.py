@@ -30,6 +30,7 @@ from docetl.reasoning_optimizer.directives.change_model_cost import (
 from docetl.reasoning_optimizer.op_descriptions import *
 from docetl.utils import extract_output_from_json
 from .jev_selector import JevSelector, JevAPIError, DEFAULT_JEV_MODEL, DEFAULT_INPUT_PRICE
+from .label_guard import label_free_yaml, sanitize_pipeline, sanitized_copy, strip_labels
 from .Node import Node
 from .ParetoFrontier import ParetoFrontier
 from .mcts_utils import *
@@ -103,6 +104,9 @@ class MCTS:
             if selector_backend == "jev" else None
         )
         self.selector_calls = []
+        # Ground truth must never reach the agent or a candidate pipeline: the root and every
+        # node derived from it read label-free copies of the input data (see label_guard).
+        root_yaml_path = label_free_yaml(root_yaml_path, dataset_name, output_dir)
         self.root = Node(root_yaml_path, c=exploration_constant)
         self.tree_lock = threading.RLock()
         self.max_concurrent_agents = 3
@@ -135,7 +139,7 @@ class MCTS:
         self.expansion_count = expansion_count
         self.start_time = None
         self.model = model
-        self.sample_input = sample_input
+        self.sample_input = strip_labels(sample_input, dataset_name)
         self.dataset_stats = dataset_stats
         self.dataset_name = dataset_name
         self.output_dir = output_dir
@@ -189,6 +193,8 @@ class MCTS:
             for model_yaml_path in first_layer_yaml_paths[dataset_name]:
                 model_yaml_path = Path(output_dir) / f"{dataset_name}" / model_yaml_path
                 child = Node(model_yaml_path)
+                # Cached first-layer configs point at the labeled split; descendants copy this.
+                sanitize_pipeline(child.parsed_yaml, dataset_name, self.output_dir)
                 child_model = child.parsed_yaml["default_model"]
                 child_model = child_model.replace("azure/", "").replace("gemini/", "")
                 child.cost = MODEL_COSTS[dataset_name][child_model]
@@ -197,7 +203,7 @@ class MCTS:
                 action_name = "change to " + child_model
                 action = self.directive_name_to_obj[action_name]
                 child.latest_action = action
-                child.sample_result = extract_output_from_json(model_yaml_path)
+                child.sample_result = strip_labels(extract_output_from_json(model_yaml_path), dataset_name)
                 
                 # Mark all change model directives as used for first layer nodes
                 # since they are already model-specific plans
@@ -220,7 +226,7 @@ class MCTS:
             print("🔄 Using pre-executed original query result for MCTS root node")
             # Set root node properties from original query result
             self.root.cost = original_query_result["cost"]
-            self.root.sample_result = original_query_result.get("sample_output", [])
+            self.root.sample_result = strip_labels(original_query_result.get("sample_output", []), dataset_name)
 
             # Update the root node's YAML to point to the original query result file
             if original_query_result.get("output_file_path"):
@@ -862,7 +868,7 @@ class MCTS:
         if isinstance(datasets, dict) and datasets:
             first_dataset = next(iter(datasets.values()))
             if isinstance(first_dataset, dict):
-                input_file_path = first_dataset.get("path")
+                input_file_path = sanitized_copy(first_dataset.get("path"), self.dataset_name, self.output_dir)
 
         # Mark action as used and increment use count immediately
         for target_op in target_op_list:
@@ -1141,6 +1147,7 @@ class MCTS:
         """
 
         new_parsed_yaml = deepcopy(node.parsed_yaml)
+        sanitize_pipeline(new_parsed_yaml, self.dataset_name, self.output_dir)
         new_parsed_yaml["operations"] = new_ops_list
         new_parsed_yaml["bypass_cache"] = True
         new_parsed_yaml = update_pipeline(

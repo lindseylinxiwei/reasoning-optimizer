@@ -19,6 +19,7 @@ from typing import Dict, List, Any, Optional, Literal
 from pydantic import BaseModel, Field
 from litellm import completion
 from docetl.runner import DSLRunner
+from docetl.mcts.label_guard import sanitized_copy, strip_labels
 from experiments.reasoning.evaluation.utils import run_dataset_evaluation, get_evaluate_func, dataset_accuracy_metrics
 import modal
 from experiments.reasoning.utils import app, volume, VOLUME_MOUNT_PATH, image
@@ -79,7 +80,9 @@ class PipelineExecutor:
     
     def create_yaml(self, operators: List[Dict], dataset: str, prefix: str = "pipeline") -> str:
         """Create a pipeline YAML configuration."""
-        dataset_file = f"experiments/reasoning/data/train/{dataset.lower()}.json"
+        dataset_file = sanitized_copy(
+            f"experiments/reasoning/data/train/{dataset.lower()}.json", dataset, str(self.experiment_dir)
+        )
         output_json = self.experiment_dir / f"{prefix}_output.json"
         
         # Add azure/ or gemini/ prefix to models
@@ -213,7 +216,9 @@ class DataAnalyzer:
         try:
             with open(data_path, 'r') as f:
                 data = json.load(f)
-                return data[:limit] if isinstance(data, list) else [data]
+                samples = data[:limit] if isinstance(data, list) else [data]
+                # The agent must never see ground-truth fields.
+                return strip_labels(samples, dataset)
         except Exception:
             return []
     

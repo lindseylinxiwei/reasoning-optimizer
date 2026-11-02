@@ -15,6 +15,7 @@ import glob
 from pathlib import Path
 from typing import Dict, Any
 from docetl.utils import extract_output_from_json
+from docetl.mcts.label_guard import label_free_yaml, strip_labels
 import matplotlib.pyplot as plt
 from docetl.runner import DSLRunner
 import yaml
@@ -176,6 +177,8 @@ def run_baseline_experiment(
     # Create output directory
     output_path = Path(output_dir) / experiment_name
     output_path.mkdir(parents=True, exist_ok=True)
+    # The agent and every pipeline it writes read label-free copies of the inputs.
+    yaml_path = label_free_yaml(yaml_path, dataset, str(output_path))
     
     print(f"🚀 Running Baseline Agent Experiment")
     print(f"=" * 50)
@@ -198,7 +201,7 @@ def run_baseline_experiment(
     if original_query_result and original_query_result["success"]:
         print("✅ Using pre-executed original query result")
         # Use the pre-executed original query result
-        orig_output_sample = original_query_result["sample_output"]
+        orig_output_sample = strip_labels(original_query_result["sample_output"], dataset)
         baseline_cost = original_query_result["cost"]
         
         # Copy the original output file to our experiment directory for consistency
@@ -317,7 +320,7 @@ def run_baseline_experiment(
             if sample_data_path and sample_data_path.exists():
                 try:
                     with open(sample_data_path, 'r') as f:
-                        sample_data = json.load(f)
+                        sample_data = strip_labels(json.load(f), dataset)
                 except Exception as e:
                     print(f"Warning: Could not load sample data from {sample_data_path}: {e}")
             print("="*100)

@@ -28,6 +28,7 @@ from docetl.reasoning_optimizer.directives import (
 from docetl.reasoning_optimizer.directives.base import AVAILABLE_MODELS
 from docetl.reasoning_optimizer.directives.change_model_cost import MODEL_STATS
 from docetl.reasoning_optimizer.load_data import load_input_doc
+from docetl.mcts.label_guard import label_fields, strip_labels
 from docetl.reasoning_optimizer.op_descriptions import *
 
 # Maximum number of tokens we will allow in the prompt we send to the model.
@@ -272,7 +273,7 @@ def create_expansion_prompt_acc(node, action_options, input_query, available_act
     print("action_stats_str: ")
     print(action_stats_str)
 
-    input_schema = load_input_doc(yaml_file_path)
+    input_schema = load_input_doc(yaml_file_path, exclude_fields=label_fields(dataset))
 
     user_message = f"""
     I have a set of operations used to process long documents, along with a list of possible rewrite directives aimed at improving the quality of the query result.
@@ -329,9 +330,9 @@ def create_expansion_prompt_acc(node, action_options, input_query, available_act
     Make sure you only choose from the valid choices above and avoid already used combinations or approaches too similar to what has already been tried in the current optimization path.
 
     Input document schema with token statistics: {input_schema} \n
-    Input data sample: {json.dumps(sample_input, indent=2)[:5000]} \n
+    Input data sample: {json.dumps(strip_labels(sample_input, dataset), indent=2)[:5000]} \n
     The original query in YAML format using our operations: {input_query} \n
-    The original query result: {json.dumps(node.sample_result, indent=2)[:3000]} \n
+    The original query result: {json.dumps(strip_labels(node.sample_result, dataset), indent=2)[:3000]} \n
     """
     
     # Create a condensed version for message history (without full operator/directive descriptions)
@@ -389,7 +390,7 @@ def create_expansion_prompt_cost(node, action_options, input_query, available_ac
     print("action_stats_str: ")
     print(action_stats_str)
 
-    input_schema = load_input_doc(yaml_file_path)
+    input_schema = load_input_doc(yaml_file_path, exclude_fields=label_fields(dataset))
 
     user_message = f"""
     I have a set of operations used to process long documents, along with a list of possible rewrite directives designed to improve the cost effectiveness of the pipeline, while maintaining similar or better accuracy.
@@ -445,9 +446,9 @@ def create_expansion_prompt_cost(node, action_options, input_query, available_ac
     Make sure you only choose from the valid choices above and avoid already used combinations or approaches too similar to what has already been tried in the current optimization path.
 
     Input document schema with token statistics: {input_schema} \n
-    Input data sample: {json.dumps(sample_input, indent=2)[:5000]} \n
+    Input data sample: {json.dumps(strip_labels(sample_input, dataset), indent=2)[:5000]} \n
     The original query in YAML format using our operations: {input_query} \n
-    The original query result: {json.dumps(node.sample_result, indent=2)[:3000]} \n
+    The original query result: {json.dumps(strip_labels(node.sample_result, dataset), indent=2)[:3000]} \n
     """
     
     # Create a condensed version for message history (without full operator/directive descriptions)

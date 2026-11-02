@@ -27,8 +27,15 @@ def evaluate_results(method_name: str, results_file: str, ground_truth_file: str
     Args:
         method_name: Name of the method being evaluated
         results_file: Path to the results JSON file
-        ground_truth_file: Not used - ground truth is in the results data itself
-        
+        ground_truth_file: Labeled input file (records with "Text ID", "Error Flag",
+            "Error Sentence", "Corrected Sentence"). Ground truth is looked up there by Text ID,
+            so the pipeline never needs to carry labels. get_evaluate_func passes the labeled
+            split file here.
+        original_json_file: Used the same way if ground_truth_file is not given.
+
+    If neither file is given, falls back to reading the labels from the results (the old
+    behavior, which requires labels to flow through the pipeline).
+
     Returns:
         Dictionary containing evaluation metrics
     """
@@ -36,10 +43,16 @@ def evaluate_results(method_name: str, results_file: str, ground_truth_file: str
     with open(results_file, 'r') as f:
         results = json.load(f)
 
-    # Ground truth is embedded in the results data itself
-    # Create a mapping from Text ID to ground truth from the results
+    gt_file = ground_truth_file or original_json_file
+    if gt_file:
+        with open(gt_file, 'r') as f:
+            gt_records = json.load(f)
+    else:
+        gt_records = results
+
+    # Create a mapping from Text ID to ground truth
     gt_mapping = {}
-    for result in results:
+    for result in gt_records:
         if isinstance(result, dict) and "Text ID" in result:
             text_id = result["Text ID"]
             

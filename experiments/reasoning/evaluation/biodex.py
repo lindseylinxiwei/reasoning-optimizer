@@ -86,14 +86,25 @@ def evaluate_results(method_name: str, results_file: str, ground_truth_file: str
     Args:
         method_name: Name of the method being evaluated
         results_file: Path to the results JSON file
-        ground_truth_file: Not used - ground truth is embedded in results
-        
+        ground_truth_file: Labeled input file (records with "id" and "ground_truth_reactions").
+            Ground truth is looked up there by id, so the pipeline never needs to carry labels.
+            get_evaluate_func passes the labeled split file here.
+        original_json_file: Used the same way if ground_truth_file is not given.
+
+    If neither file is given, falls back to reading "ground_truth_reactions" from the results
+    (the old behavior, which requires labels to flow through the pipeline).
+
     Returns:
         Dictionary containing evaluation metrics
     """
-    # Load results (which already contain ground truth)
     with open(results_file, 'r') as f:
         results = json.load(f)
+
+    gt_file = ground_truth_file or original_json_file
+    gt_by_id = None
+    if gt_file:
+        with open(gt_file, "r") as f:
+            gt_by_id = {item["id"]: item.get("ground_truth_reactions", []) for item in json.load(f)}
 
     if original_json_file:
         with open(original_json_file, "r") as f:
@@ -112,8 +123,10 @@ def evaluate_results(method_name: str, results_file: str, ground_truth_file: str
     # Process results
     for result in results:
         if isinstance(result, dict):
-            # Ground truth is already in the document
-            ground_truth = result.get("ground_truth_reactions", [])
+            if gt_by_id is not None:
+                ground_truth = gt_by_id.get(result.get("id"), [])
+            else:
+                ground_truth = result.get("ground_truth_reactions", [])
             predictions = result.get("ranked_reaction_labels", [])
             
             if not ground_truth:  # Skip if no ground truth

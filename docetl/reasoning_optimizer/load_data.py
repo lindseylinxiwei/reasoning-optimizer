@@ -141,7 +141,8 @@ def count_tokens_in_data(data, model="gpt-4o"):
         print(f"  [WARNING] Could not count tokens: {e}")
         return None
 
-def load_input_doc(yaml_path):
+def load_input_doc(yaml_path, exclude_fields=()):
+    """Describe the pipeline's input datasets; fields in exclude_fields (labels) are omitted."""
     doc_info = ""
     load_dotenv()
     try:
@@ -177,6 +178,8 @@ def load_input_doc(yaml_path):
                 schema = extract_input_schema(data)
                 doc_info += f"  Input schema:\n"
                 for field, field_info in schema.items():
+                    if field in exclude_fields:
+                        continue
                     doc_info += f"    {field}: {field_info['type']} (avg: {field_info['avg_tokens']} tokens)\n"
                 token_count = count_tokens_in_data(data)
                 if token_count is not None:
