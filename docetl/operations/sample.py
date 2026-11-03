@@ -478,6 +478,7 @@ class SampleOperation(BaseOperation):
         embedding_config = {
             "embedding_keys": keys,
             "embedding_model": config.get("embedding_model", "text-embedding-3-small"),
+            "embedding_max_chars": config.get("embedding_max_chars"),
         }
         embeddings, cost = get_embeddings_for_clustering(
             input_data, embedding_config, self.runner.api

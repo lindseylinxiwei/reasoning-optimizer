@@ -23,12 +23,15 @@ def get_embeddings_for_clustering(
 
     embeddings = []
     cost = 0
-    batch_size = 1000
+    # Gemini accepts at most 100 texts per batchEmbedContents request.
+    batch_size = 100 if "gemini" in embedding_model else 1000
+    # Characters of each item that are embedded (default 1000; retrieval over long chunks needs more).
+    max_chars = sampling_config.get("embedding_max_chars") or 1000
 
     for i in range(0, len(items), batch_size):
         batch = items[i : i + batch_size]
         texts = [
-            " ".join(str(item[key]) for key in embedding_keys if key in item)[:1000]
+            " ".join(str(item[key]) for key in embedding_keys if key in item)[:max_chars]
             for item in batch
         ]
         response = api_wrapper.gen_embedding(embedding_model, json.dumps(texts))

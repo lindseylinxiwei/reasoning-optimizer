@@ -43,6 +43,9 @@ class TopKOperation(BaseOperation):
             "text-embedding-3-small",
             description="Embedding model (for embedding and llm_compare methods)",
         )
+        embedding_max_chars: int | None = Field(
+            None, description="Characters of each item embedded (embedding method; default 1000)"
+        )
         model: str | None = Field(None, description="LLM model for llm_compare method")
         batch_size: int | None = Field(
             10, description="Batch size for LLM comparisons in llm_compare method"
@@ -165,6 +168,8 @@ class TopKOperation(BaseOperation):
             sample_config["method_kwargs"]["embedding_model"] = self.config.get(
                 "embedding_model", "text-embedding-3-small"
             )
+            if self.config.get("embedding_max_chars"):
+                sample_config["method_kwargs"]["embedding_max_chars"] = self.config["embedding_max_chars"]
 
         # Add any additional config like random_state, bypass_cache
         if "random_state" in self.config:
