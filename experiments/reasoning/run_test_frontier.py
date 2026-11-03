@@ -104,7 +104,7 @@ def compute_pareto_frontier(points: List[Dict[str, float]]) -> List[Dict[str, fl
 
 # Dataset configurations
 DATASETS = ["cuad", "blackvault", "game_reviews", "sustainability", "biodex", "medec", "facility"]
-METHODS = ["simple_baseline", "mcts", "mcts_kimi", "mcts_llama", "mcts_old_directive"]
+METHODS = ["simple_baseline", "simple_baseline_strong", "mcts", "mcts_kimi", "mcts_llama", "mcts_old_directive"]
 
 # DocETL-V1 baseline results
 DOCETL_V1_RESULTS = {
@@ -131,8 +131,8 @@ def calculate_avg_cost_savings_matrix(all_points: Dict[str, List[Dict[str, float
     # Get all methods including original and reorder them
     available_methods = [m for m in all_points.keys() if all_points[m]]
     
-    # Define the desired order: MCTS, Original, simple_baseline, lotus, PZ variants, DocETL-V1
-    desired_order = ["mcts", "original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1"]
+    # Define the desired order: MCTS, Original, simple_baseline, simple_baseline_strong, lotus, PZ variants, DocETL-V1, frontier_models
+    desired_order = ["mcts", "original", "simple_baseline", "simple_baseline_strong", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1", "frontier_models"]
     
     # Reorder methods according to desired order
     methods = []
@@ -284,8 +284,8 @@ def calculate_best_cost_savings_matrix(all_points: Dict[str, List[Dict[str, floa
     # Get all methods including original and reorder them
     available_methods = [m for m in all_points.keys() if all_points[m]]
     
-    # Define the desired order: MCTS, Original, simple_baseline, lotus, PZ variants, DocETL-V1
-    desired_order = ["mcts", "original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1"]
+    # Define the desired order: MCTS, Original, simple_baseline, simple_baseline_strong, lotus, PZ variants, DocETL-V1, frontier_models
+    desired_order = ["mcts", "original", "simple_baseline", "simple_baseline_strong", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1", "frontier_models"]
     
     # Reorder methods according to desired order
     methods = []
@@ -473,7 +473,7 @@ def calculate_comparison_metrics(all_points: Dict[str, List[Dict[str, float]]]) 
     
     # Define our method vs other systems
     our_method = "mcts"  # Only MCTS is our method
-    other_systems = ["original", "simple_baseline", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1"]
+    other_systems = ["original", "simple_baseline", "simple_baseline_strong", "lotus", "LOTUS_d", "LOTUS_r&r", "PZ_direct", "PZ_retrieval", "PZ", "DocETL-V1", "frontier_models"]
     
     # Filter out methods with no data
     if our_method not in all_points or not all_points[our_method]:
@@ -641,6 +641,7 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
         elif method == "mcts_kimi": experiment_dir = base_output_dir / f"{dataset}_mcts_kimi2_5_full"
         elif method == "mcts_llama": experiment_dir = base_output_dir / f"{dataset}_mcts_Llama4_full"
         elif method == "mcts_old_directive": experiment_dir = base_output_dir / f"{dataset}_mcts_old_directive"
+        elif method == "simple_baseline_strong": experiment_dir = base_output_dir / f"{dataset}_{method}"
         else: experiment_dir = base_output_dir / f"{dataset}_{method}_final"
         pareto_file = experiment_dir / f"pareto_frontier_{dataset}.json"
         
@@ -917,7 +918,7 @@ def run_test_frontier_remote(dataset: str, method: str) -> Dict[str, Any]:
     volumes={VOLUME_MOUNT_PATH: volume},
     timeout=60 * 30
 )
-def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[str, Any]:
+def generate_test_frontier_plot(dataset: str, adv_graph: bool = False, methods_filter: List[str] = None, filter_below_original: bool = True) -> Dict[str, Any]:
     """
     Generate a plot of test frontier results for all methods.
     
@@ -942,6 +943,7 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
         all_points = {
             "original": [],
             "simple_baseline": [],
+            "simple_baseline_strong": [],
             "mcts": [],
             "mcts_kimi": [],
             "mcts_llama": [],
@@ -959,7 +961,8 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
         method_colors = {
             "original": "#ffd700",           # Gold/Yellow
             "simple_baseline": "#2ecc71",    # Green
-            "mcts": "#3498db",               # Bright blue
+            "simple_baseline_strong": "#17a2b8",  # Cyan/teal-blue for Simple agent+
+            "mcts": "#555555",               # Dark gray (black-ish)
             "mcts_kimi": "#e74c3c",          # Bright Red
             "mcts_llama": "#9b59b6",         # Purple
             "mcts_old_directive": "#1abc9c", # Teal
@@ -1109,6 +1112,37 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
             print(f"  ✅ Loaded {len(all_points['mcts_old_directive'])} test points from mcts_old_directive pareto frontier")
         else:
             print(f"  ⚠️  No mcts_old_directive pareto frontier found at {mcts_old_directive_pareto_file}")
+        
+        # Load simple_baseline_strong data from its own pareto frontier file
+        simple_baseline_strong_pareto_file = base_output_dir / f"{dataset}_simple_baseline_strong" / f"pareto_frontier_{dataset}.json"
+        if simple_baseline_strong_pareto_file.exists():
+            print(f"  📄 Found simple_baseline_strong pareto frontier at: {simple_baseline_strong_pareto_file}")
+            with open(simple_baseline_strong_pareto_file, 'r') as f:
+                simple_baseline_strong_data = json.load(f)
+            
+            frontier_points = simple_baseline_strong_data.get("frontier_points", [])
+            for point in frontier_points:
+                # Use test results if available, otherwise use train results
+                if "test_cost" in point and "test_accuracy" in point and point.get("test_accuracy") is not None:
+                    point_data = {
+                        "cost": point["test_cost"],
+                        "accuracy": point["test_accuracy"]
+                    }
+                elif "cost" in point and "accuracy" in point:
+                    point_data = {
+                        "cost": point["cost"],
+                        "accuracy": point["accuracy"]
+                    }
+                else:
+                    continue
+                
+                if "file" in point:
+                    point_data["file"] = point["file"]
+                all_points["simple_baseline_strong"].append(point_data)
+            
+            print(f"  ✅ Loaded {len(all_points['simple_baseline_strong'])} test points from simple_baseline_strong pareto frontier")
+        else:
+            print(f"  ⚠️  No simple_baseline_strong pareto frontier found at {simple_baseline_strong_pareto_file}")
         
         # check local othersystems directory
         local_othersystems = Path("experiments/reasoning/othersystems") / dataset
@@ -1306,6 +1340,17 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
             else:
                 print(f"  {method}: 0 points")
         
+        # Filter methods if methods_filter is provided
+        if methods_filter is not None:
+            print(f"\n📊 Filtering to only include methods: {methods_filter}")
+            filtered_all_points = {}
+            for method in methods_filter:
+                if method in all_points:
+                    filtered_all_points[method] = all_points[method]
+                else:
+                    filtered_all_points[method] = []
+            all_points = filtered_all_points
+        
         # Check if we have any data to plot
         total_points = sum(len(points) for points in all_points.values())
         if total_points == 0:
@@ -1368,8 +1413,8 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                         print(f"  {method}: {len(points)} total points → {len(frontier)} frontier points")
                         all_points[method] = frontier
             
-            # Filter out all points below original accuracy (except original itself)
-            if original_accuracy is not None:
+            # Filter out all points below original accuracy (except original itself) - only if filter_below_original is True
+            if filter_below_original and original_accuracy is not None:
                 print(f"\n📊 Filtering out points below original accuracy ({original_accuracy:.4f})...")
                 for method, points in all_points.items():
                     if method == "original":
@@ -1384,6 +1429,8 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                         after_count = len(filtered_points)
                         if before_count != after_count:
                             print(f"  {method}: {before_count} → {after_count} points (removed {before_count - after_count} below original)")
+            elif not filter_below_original:
+                print(f"\n📊 Skipping filter below original accuracy (filter_below_original=False)")
         
         # Plot points for each method
         for method, points in all_points.items():
@@ -1405,18 +1452,18 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                               color=method_colors[method],
                               s=700, marker='*', alpha=0.4, edgecolors='black', linewidth=1)
                 elif method == "mcts":
-                    # For MCTS in adv_graph mode, connect points with black line
+                    # For MCTS in adv_graph mode, connect points with dark gray line
                     if adv_graph and len(costs) > 1:
                         # Sort by cost for line connection
                         sorted_indices = sorted(range(len(costs)), key=lambda i: costs[i])
                         sorted_costs = [costs[i] for i in sorted_indices]
                         sorted_accuracies = [accuracies[i] for i in sorted_indices]
                         ax.plot(sorted_costs, sorted_accuracies, 
-                               color='black', linewidth=2, alpha=0.6, zorder=1)
+                               color='#333333', linewidth=2, alpha=0.6, zorder=1)
                     
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
-                              s=450, alpha=0.4, edgecolors='black', linewidth=1, zorder=2)
+                              s=450, alpha=0.5, edgecolors='black', linewidth=1, zorder=2)
                 elif method == "mcts_kimi":
                     # For MCTS_kimi in adv_graph mode, connect points with red line
                     if adv_graph and len(costs) > 1:
@@ -1446,6 +1493,15 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                               s=500, alpha=0.7, edgecolors='black', linewidth=1.5, zorder=3,
                               marker='s')  # Square marker to distinguish from mcts and mcts_kimi
                 elif method == "mcts_old_directive":
+                    # For cuad dataset, filter out points with accuracy < 0.1
+                    if dataset == "cuad":
+                        filtered_data = [(c, a) for c, a in zip(costs, accuracies) if a >= 0.1]
+                        if filtered_data:
+                            costs = [d[0] for d in filtered_data]
+                            accuracies = [d[1] for d in filtered_data]
+                        else:
+                            continue  # Skip if no valid points remain
+                    
                     # For MCTS_old_directive in adv_graph mode, connect points with teal line
                     if adv_graph and len(costs) > 1:
                         # Sort by cost for line connection
@@ -1463,6 +1519,20 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                     ax.scatter(costs, accuracies, 
                               color=method_colors[method],
                               s=450, alpha=0.4, edgecolors='black', linewidth=1)
+                elif method == "simple_baseline_strong":
+                    # For simple_baseline_strong in adv_graph mode, connect points with line
+                    if adv_graph and len(costs) > 1:
+                        # Sort by cost for line connection
+                        sorted_indices = sorted(range(len(costs)), key=lambda i: costs[i])
+                        sorted_costs = [costs[i] for i in sorted_indices]
+                        sorted_accuracies = [accuracies[i] for i in sorted_indices]
+                        ax.plot(sorted_costs, sorted_accuracies, 
+                               color='#117a8b', linewidth=2, alpha=0.6, zorder=1)  # Dark cyan line
+                    
+                    ax.scatter(costs, accuracies, 
+                              color=method_colors[method],
+                              s=500, alpha=0.5, edgecolors='black', linewidth=1.5, zorder=3,
+                              marker='^')  # Triangle marker to distinguish from simple_baseline
                 else:
                     # Custom label mapping for methods
                     label_map = {
@@ -1472,7 +1542,8 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
                         "lotus": "LOTUS",
                         "LOTUS_d": "LOTUS-d",
                         "LOTUS_r&r": "LOTUS-r&r",
-                        "DocETL-V1": "DocETL-V1"
+                        "DocETL-V1": "DocETL-V1",
+                        "simple_baseline_strong": "Simple agent+"
                     }
                     label = label_map.get(method, method.replace("_", " ").title())
                     
@@ -1593,7 +1664,17 @@ def generate_test_frontier_plot(dataset: str, adv_graph: bool = False) -> Dict[s
         plt.tight_layout()
         
         # Save the plot
-        if adv_graph:
+        if methods_filter is not None:
+            # Determine plot filename based on which methods are included
+            if "simple_baseline_strong" in methods_filter and "simple_baseline" in methods_filter:
+                plot_filename = "test_frontier_plot_strong.pdf"
+            elif "mcts_old_directive" in methods_filter:
+                plot_filename = "test_frontier_plot_ver.pdf"
+            elif "mcts_kimi" in methods_filter or "mcts_llama" in methods_filter:
+                plot_filename = "test_frontier_plot_moar.pdf"
+            else:
+                plot_filename = "test_frontier_plot_filtered.pdf"
+        elif adv_graph:
             plot_filename = "test_frontier_plot_adv.pdf"
         else:
             plot_filename = "test_frontier_plot.pdf"
@@ -2072,23 +2153,23 @@ def generate_train_test_comparison_plot(dataset: str) -> Dict[str, Any]:
             # Plot train point (circle)
             ax.scatter([train_cost], [train_acc], 
                       color=color,
-                      s=450, alpha=0.4, edgecolors=edge_color, linewidth=1, zorder=3,
+                      s=550, alpha=0.65, edgecolors=edge_color, linewidth=1.5, zorder=3,
                       marker='o')
             
             # Plot test point (triangle)
             ax.scatter([test_cost], [test_acc], 
                       color=color,
-                      s=450, alpha=0.4, edgecolors=edge_color, linewidth=1, zorder=3,
+                      s=550, alpha=0.65, edgecolors=edge_color, linewidth=1.5, zorder=3,
                       marker='^')
         
         # Create custom legend entries
         # Shape legend for train vs test (using neutral gray with darker edge)
         legend_gray = '#808080'
         legend_edge = '#4d4d4d'
-        train_legend = ax.scatter([], [], color=legend_gray, s=300, marker='o', 
-                                  edgecolors=legend_edge, linewidth=1, alpha=0.4, label='Train')
-        test_legend = ax.scatter([], [], color=legend_gray, s=300, marker='^', 
-                                 edgecolors=legend_edge, linewidth=1, alpha=0.4, label='Test')
+        train_legend = ax.scatter([], [], color=legend_gray, s=350, marker='o', 
+                                  edgecolors=legend_edge, linewidth=1.5, alpha=0.65, label='Train')
+        test_legend = ax.scatter([], [], color=legend_gray, s=350, marker='^', 
+                                 edgecolors=legend_edge, linewidth=1.5, alpha=0.65, label='Test')
         
         legend_handles = [train_legend, test_legend]
         
@@ -2164,13 +2245,13 @@ def generate_train_test_comparison_plot(dataset: str) -> Dict[str, Any]:
             'sustainability': 'Sustainability'
         }
         title = dataset_titles.get(dataset, dataset.upper())
-        ax.set_title(f'{title} - Train vs Test Comparison', fontsize=28, fontweight='bold')
+        ax.set_title(title, fontsize=28, fontweight='bold')
         
         # Set tick label font size
         ax.tick_params(axis='both', which='major', labelsize=28)
         
         # Add legend for shapes only (color explained by colorbar)
-        ax.legend(handles=legend_handles, fontsize=16, loc='lower right',
+        ax.legend(handles=legend_handles, fontsize=16, loc='upper left',
                  title='Data Split', title_fontsize=14)
         
         # Add grid
@@ -2181,8 +2262,8 @@ def generate_train_test_comparison_plot(dataset: str) -> Dict[str, Any]:
         plt.tight_layout()
         
         # Save the plot
-        plot_filename = "train_test_comparison_plot.pdf"
-        plot_path = base_output_dir / f"{dataset}_original_final" / plot_filename
+        plot_filename = f"train_test_{dataset}.pdf"
+        plot_path = base_output_dir / plot_filename
         plot_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close()
@@ -2258,6 +2339,302 @@ def generate_train_test_comparison_plot(dataset: str) -> Dict[str, Any]:
     volumes={VOLUME_MOUNT_PATH: volume},
     timeout=60 * 30
 )
+def generate_strong_legend_plot() -> Dict[str, Any]:
+    """
+    Generate a standalone horizontal legend plot for strong comparison 
+    (User-specified plan, MOAR, SA, MOAR (no search), PZ, LOTUS, DocETL-V1).
+    
+    Returns:
+        Dictionary with plot generation status
+    """
+    matplotlib.use('Agg')  # Use non-interactive backend for Modal
+    
+    try:
+        print(f"\n📊 Generating strong comparison legend plot")
+        
+        # Method colors (matching generate_test_frontier_plot)
+        method_colors = {
+            "original": "#ffd700",           # Gold/Yellow
+            "mcts": "#555555",               # Dark gray (black-ish)
+            "simple_baseline": "#2ecc71",    # Green
+            "simple_baseline_strong": "#17a2b8",  # Cyan/teal-blue
+            "PZ": "#ff0b50",                 # Pink/magenta
+            "lotus": "#c27cf3",              # Light purple
+            "DocETL-V1": "#ff9500"           # Orange
+        }
+        
+        # Define the methods with their labels, markers, and sizes
+        methods_info = [
+            {"key": "original", "label": "User-specified plan", "marker": "*", "size": 700},
+            {"key": "mcts", "label": "MOAR", "marker": "o", "size": 450},
+            {"key": "simple_baseline", "label": "SA", "marker": "o", "size": 450},
+            {"key": "simple_baseline_strong", "label": "MOAR (no search)", "marker": "^", "size": 500},
+            {"key": "PZ", "label": "PZ", "marker": "o", "size": 450},
+            {"key": "lotus", "label": "LOTUS", "marker": "o", "size": 450},
+            {"key": "DocETL-V1", "label": "DocETL-V1", "marker": "o", "size": 450},
+        ]
+        
+        # Create a figure with just enough space for the legend
+        fig, ax = plt.subplots(figsize=(10, 1))
+        
+        # Create dummy scatter plots for each method (off the visible area)
+        handles = []
+        for method_info in methods_info:
+            color = method_colors[method_info["key"]]
+            handle = ax.scatter([], [], 
+                              color=color,
+                              label=method_info["label"],
+                              s=method_info["size"],
+                              marker=method_info["marker"],
+                              alpha=0.4,
+                              edgecolors='black',
+                              linewidth=1)
+            handles.append(handle)
+        
+        # Create horizontal legend
+        legend = ax.legend(handles=handles, 
+                          loc='center',
+                          ncol=len(methods_info),
+                          frameon=True,
+                          shadow=False,
+                          fontsize=20,
+                          facecolor='white',
+                          edgecolor='black',
+                          columnspacing=1.5,
+                          handletextpad=0.5)
+        legend.get_frame().set_alpha(0.3)
+        
+        # Remove axes
+        ax.axis('off')
+        
+        # Tight layout
+        plt.tight_layout()
+        
+        # Save the plot
+        base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
+        plot_path = base_output_dir / "legend_plot_strong.pdf"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        
+        plt.close()
+        
+        print(f"📈 Strong comparison legend plot saved to: {plot_path}")
+        
+        # Commit changes to Modal volume
+        volume.commit()
+        
+        return {
+            "success": True,
+            "plot_path": str(plot_path)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error generating strong comparison legend plot: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_dotenv()],
+    volumes={VOLUME_MOUNT_PATH: volume},
+    timeout=60 * 30
+)
+def generate_ver_legend_plot() -> Dict[str, Any]:
+    """
+    Generate a standalone horizontal legend plot for version comparison (MOAR-gpt5, MOAR-gpt5-OldDirective, DocETL-V1).
+    
+    Returns:
+        Dictionary with plot generation status
+    """
+    matplotlib.use('Agg')  # Use non-interactive backend for Modal
+    
+    try:
+        print(f"\n📊 Generating version comparison legend plot")
+        
+        # Method colors (matching generate_test_frontier_plot)
+        method_colors = {
+            "mcts": "#3498db",               # Bright blue
+            "mcts_old_directive": "#1abc9c", # Teal
+            "DocETL-V1": "#ff9500"           # Orange
+        }
+        
+        # Define the three methods with their labels, markers, and sizes
+        methods_info = [
+            {"key": "mcts", "label": "MOAR", "marker": "o", "size": 450},
+            {"key": "mcts_old_directive", "label": "MOAR-V1", "marker": "p", "size": 500},
+            {"key": "DocETL-V1", "label": "DocETL-v1", "marker": "o", "size": 450},
+        ]
+        
+        # Create a figure with just enough space for the legend
+        fig, ax = plt.subplots(figsize=(6, 1))
+        
+        # Create dummy scatter plots for each method (off the visible area)
+        handles = []
+        for method_info in methods_info:
+            color = method_colors[method_info["key"]]
+            handle = ax.scatter([], [], 
+                              color=color,
+                              label=method_info["label"],
+                              s=method_info["size"],
+                              marker=method_info["marker"],
+                              alpha=0.4,
+                              edgecolors='black',
+                              linewidth=1)
+            handles.append(handle)
+        
+        # Create horizontal legend
+        legend = ax.legend(handles=handles, 
+                          loc='center',
+                          ncol=len(methods_info),
+                          frameon=True,
+                          shadow=False,
+                          fontsize=20,
+                          facecolor='white',
+                          edgecolor='black',
+                          columnspacing=1.5,
+                          handletextpad=0.5)
+        legend.get_frame().set_alpha(0.3)
+        
+        # Remove axes
+        ax.axis('off')
+        
+        # Tight layout
+        plt.tight_layout()
+        
+        # Save the plot
+        base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
+        plot_path = base_output_dir / "legend_plot_ver.pdf"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        
+        plt.close()
+        
+        print(f"📈 Version legend plot saved to: {plot_path}")
+        
+        # Commit changes to Modal volume
+        volume.commit()
+        
+        return {
+            "success": True,
+            "plot_path": str(plot_path)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error generating version legend plot: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_dotenv()],
+    volumes={VOLUME_MOUNT_PATH: volume},
+    timeout=60 * 30
+)
+def generate_moar_legend_plot() -> Dict[str, Any]:
+    """
+    Generate a standalone horizontal legend plot for MOAR variants (User-specified plan, MOAR, MOAR-Kimi, MOAR-Llama).
+    
+    Returns:
+        Dictionary with plot generation status
+    """
+    matplotlib.use('Agg')  # Use non-interactive backend for Modal
+    
+    try:
+        print(f"\n📊 Generating MOAR variants legend plot")
+        
+        # Method colors (matching generate_test_frontier_plot)
+        method_colors = {
+            "original": "#ffd700",           # Gold/Yellow
+            "mcts": "#3498db",               # Bright blue
+            "mcts_kimi": "#e74c3c",          # Bright Red
+            "mcts_llama": "#9b59b6",         # Purple
+        }
+        
+        # Define the four methods with their labels, markers, and sizes
+        methods_info = [
+            {"key": "original", "label": "User-specified plan", "marker": "*", "size": 700},
+            {"key": "mcts", "label": "MOAR-gpt5", "marker": "o", "size": 450},
+            {"key": "mcts_kimi", "label": "MOAR-Kimi 2.5", "marker": "D", "size": 500},
+            {"key": "mcts_llama", "label": "MOAR-Llama4-Maverick", "marker": "s", "size": 500},
+        ]
+        
+        # Create a figure with just enough space for the legend
+        fig, ax = plt.subplots(figsize=(8, 1))
+        
+        # Create dummy scatter plots for each method (off the visible area)
+        handles = []
+        for method_info in methods_info:
+            color = method_colors[method_info["key"]]
+            handle = ax.scatter([], [], 
+                              color=color,
+                              label=method_info["label"],
+                              s=method_info["size"],
+                              marker=method_info["marker"],
+                              alpha=0.4,
+                              edgecolors='black',
+                              linewidth=1)
+            handles.append(handle)
+        
+        # Create horizontal legend
+        legend = ax.legend(handles=handles, 
+                          loc='center',
+                          ncol=len(methods_info),
+                          frameon=True,
+                          shadow=False,
+                          fontsize=20,
+                          facecolor='white',
+                          edgecolor='black',
+                          columnspacing=1.5,
+                          handletextpad=0.5)
+        legend.get_frame().set_alpha(0.3)
+        
+        # Remove axes
+        ax.axis('off')
+        
+        # Tight layout
+        plt.tight_layout()
+        
+        # Save the plot
+        base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
+        plot_path = base_output_dir / "legend_plot_moar.pdf"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        
+        plt.close()
+        
+        print(f"📈 MOAR variants legend plot saved to: {plot_path}")
+        
+        # Commit changes to Modal volume
+        volume.commit()
+        
+        return {
+            "success": True,
+            "plot_path": str(plot_path)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error generating MOAR variants legend plot: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_dotenv()],
+    volumes={VOLUME_MOUNT_PATH: volume},
+    timeout=60 * 30
+)
 def generate_legend_plot() -> Dict[str, Any]:
     """
     Generate a standalone horizontal legend plot with all possible methods and markers.
@@ -2274,6 +2651,7 @@ def generate_legend_plot() -> Dict[str, Any]:
         method_colors = {
             "original": "#ffd700",           # Gold/Yellow
             "simple_baseline": "#2ecc71",    # Green
+            "simple_baseline_strong": "#17a2b8",  # Cyan/teal-blue for Simple agent+
             "mcts": "#3498db",               # Bright blue
             "mcts_kimi": "#e74c3c",          # Bright Red
             "mcts_llama": "#9b59b6",         # Purple
@@ -2296,6 +2674,7 @@ def generate_legend_plot() -> Dict[str, Any]:
             {"key": "mcts_llama", "label": "MOAR-Llama", "marker": "s", "size": 500},
             {"key": "mcts_old_directive", "label": "MOAR-OldDirective", "marker": "p", "size": 500},
             {"key": "simple_baseline", "label": "Simple agent", "marker": "o", "size": 450},
+            {"key": "simple_baseline_strong", "label": "Simple agent+", "marker": "^", "size": 500},
             {"key": "PZ", "label": "PZ", "marker": "o", "size": 450},
             {"key": "lotus", "label": "LOTUS", "marker": "o", "size": 450},
             {"key": "DocETL-V1", "label": "DocETL-V1", "marker": "o", "size": 450},
@@ -2546,6 +2925,7 @@ def run_all_test_frontiers(dataset: str, adv_graph: bool = False) -> Dict[str, A
     all_points = {
         "original": [],
         "simple_baseline": [],
+        "simple_baseline_strong": [],
         "mcts": [],
         "mcts_kimi": [],
         "mcts_llama": [],
@@ -2556,7 +2936,8 @@ def run_all_test_frontiers(dataset: str, adv_graph: bool = False) -> Dict[str, A
         "PZ_direct": [],
         "LOTUS_d": [],
         "LOTUS_r&r": [],
-        "DocETL-V1": []
+        "DocETL-V1": [],
+        "frontier_models": []
     }
     
     # Extract points from our method (MCTS)
@@ -2577,7 +2958,7 @@ def run_all_test_frontiers(dataset: str, adv_graph: bool = False) -> Dict[str, A
                 "accuracy": all_results["original"]["accuracy"]
             })
     
-    for method in ["simple_baseline"]:
+    for method in ["simple_baseline", "simple_baseline_strong"]:
         if method in all_results and all_results[method]["success"]:
             method_results = all_results[method].get("results", [])
             for point in method_results:
@@ -2697,6 +3078,26 @@ def run_all_test_frontiers(dataset: str, adv_graph: bool = False) -> Dict[str, A
             "accuracy": docetl_v1_data["accuracy"]
         })
         print(f"  ✅ Loaded DocETL-V1 baseline: cost=${docetl_v1_data['cost']:.2f}, accuracy={docetl_v1_data['accuracy']:.3f}")
+    
+    # Load frontier models data from test results (from frontier_models_summary.json)
+    base_output_dir = Path(VOLUME_MOUNT_PATH) / "outputs"
+    frontier_summary_file = base_output_dir / f"{dataset}_frontier_model" / "frontier_models_summary.json"
+    if frontier_summary_file.exists():
+        print(f"  📄 Found frontier models summary at: {frontier_summary_file}")
+        with open(frontier_summary_file, 'r') as f:
+            frontier_summary = json.load(f)
+        
+        results = frontier_summary.get("results", {})
+        for model_name, model_result in results.items():
+            if model_result.get("success") and model_result.get("accuracy") is not None and model_result.get("cost") is not None:
+                all_points["frontier_models"].append({
+                    "cost": model_result["cost"],
+                    "accuracy": model_result["accuracy"],
+                    "file": model_name
+                })
+        print(f"  ✅ Loaded {len(all_points['frontier_models'])} frontier models points from test results")
+    else:
+        print(f"  ⚠️  No frontier models summary found at {frontier_summary_file}")
         
     # Calculate metrics
     comparison_metrics = calculate_comparison_metrics(all_points)
@@ -3013,6 +3414,7 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
         all_points = {
             "original": [],
             "simple_baseline": [],
+            "simple_baseline_strong": [],
             "mcts": [],
             "mcts_kimi": [],
             "mcts_llama": [],
@@ -3023,7 +3425,8 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
             "PZ": [],
             "LOTUS_d": [],
             "LOTUS_r&r": [],
-            "DocETL-V1": []
+            "DocETL-V1": [],
+            "frontier_models": []
         }
         
         # Load test_frontier_summary.json from dataset_original folder
@@ -3070,6 +3473,38 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
                         print(f"  ⚠️  No successful results found for {method}")
         else:
             print(f"  ⚠️  No test_frontier_summary.json found at {summary_file}")
+        
+        # Load simple_baseline_strong data from its own pareto frontier file (if not already loaded)
+        if not all_points["simple_baseline_strong"]:
+            simple_baseline_strong_pareto_file = base_output_dir / f"{dataset}_simple_baseline_strong" / f"pareto_frontier_{dataset}.json"
+            if simple_baseline_strong_pareto_file.exists():
+                print(f"  📄 Found simple_baseline_strong pareto frontier at: {simple_baseline_strong_pareto_file}")
+                with open(simple_baseline_strong_pareto_file, 'r') as f:
+                    simple_baseline_strong_data = json.load(f)
+                
+                frontier_points = simple_baseline_strong_data.get("frontier_points", [])
+                for point in frontier_points:
+                    # Use test results if available, otherwise use train results
+                    if "test_cost" in point and "test_accuracy" in point and point.get("test_accuracy") is not None:
+                        point_data = {
+                            "cost": point["test_cost"],
+                            "accuracy": point["test_accuracy"]
+                        }
+                    elif "cost" in point and "accuracy" in point:
+                        point_data = {
+                            "cost": point["cost"],
+                            "accuracy": point["accuracy"]
+                        }
+                    else:
+                        continue
+                    
+                    if "file" in point:
+                        point_data["file"] = point["file"]
+                    all_points["simple_baseline_strong"].append(point_data)
+                
+                print(f"  ✅ Loaded {len(all_points['simple_baseline_strong'])} test points from simple_baseline_strong pareto frontier")
+            else:
+                print(f"  ⚠️  No simple_baseline_strong pareto frontier found at {simple_baseline_strong_pareto_file}")
         
         # Load LOTUS evaluation data if available
         lotus_file = Path("experiments/reasoning/othersystems") / dataset / "lotus_evaluation.json"
@@ -3211,6 +3646,25 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
                 "accuracy": docetl_v1_data["accuracy"]
             })
             print(f"  ✅ Loaded DocETL-V1 baseline: cost=${docetl_v1_data['cost']:.2f}, accuracy={docetl_v1_data['accuracy']:.3f}")
+        
+        # Load frontier models data from test results (from frontier_models_summary.json)
+        frontier_summary_file = base_output_dir / f"{dataset}_frontier_model" / "frontier_models_summary.json"
+        if frontier_summary_file.exists():
+            print(f"  📄 Found frontier models summary at: {frontier_summary_file}")
+            with open(frontier_summary_file, 'r') as f:
+                frontier_summary = json.load(f)
+            
+            results = frontier_summary.get("results", {})
+            for model_name, model_result in results.items():
+                if model_result.get("success") and model_result.get("accuracy") is not None and model_result.get("cost") is not None:
+                    all_points["frontier_models"].append({
+                        "cost": model_result["cost"],
+                        "accuracy": model_result["accuracy"],
+                        "file": model_name
+                    })
+            print(f"  ✅ Loaded {len(all_points['frontier_models'])} frontier models points from test results")
+        else:
+            print(f"  ⚠️  No frontier models summary found at {frontier_summary_file}")
         
         # Calculate matrices
         print("\n📊 Calculating all matrices...")
@@ -3393,7 +3847,7 @@ def generate_all_matrices(dataset: str) -> Dict[str, Any]:
 
 
 @app.local_entrypoint()
-def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False, legend_only: bool = False, adv_graph: bool = False, compare: bool = False, compare_number_all: bool = False):
+def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, matrix_only: bool = False, tradeoff: bool = False, legend_only: bool = False, legend_only_ver: bool = False, legend_only_moar: bool = False, legend_only_strong: bool = False, adv_graph: bool = False, compare: bool = False, compare_number_all: bool = False, ver_plot: bool = False, moar_plot: bool = False, plot_strong: bool = False):
     """
     Main entrypoint for running test frontier evaluation.
     
@@ -3404,9 +3858,15 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
         matrix_only: If True, only generate all three matrices without running evaluations
         tradeoff: If True, only run the top 2 accuracy tradeoff analysis for MCTS across all datasets
         legend_only: If True, only generate the standalone legend plot
+        legend_only_ver: If True, only generate the legend plot for version comparison (MOAR-gpt5, MOAR-gpt5-OldDirective, DocETL-V1)
+        legend_only_moar: If True, only generate the legend plot for MOAR variants (User-specified plan, MOAR, MOAR-Kimi, MOAR-Llama)
+        legend_only_strong: If True, only generate the legend plot for strong comparison (User-specified plan, MOAR, SA, MOAR (no search), PZ, LOTUS, DocETL-V1)
         adv_graph: If True, only show Pareto frontier points and connect MCTS points with lines
         compare: If True, generate a plot comparing MOAR train vs test results
         compare_number_all: If True, print generalization metrics for all datasets (no plots)
+        ver_plot: If True, generate plots for all datasets with only MOAR-gpt5, MOAR-gpt5-OldDirective, and DocETL-V1
+        moar_plot: If True, generate plot with only User-specified plan, MOAR, MOAR-Kimi, MOAR-Llama
+        plot_strong: If True, generate plot with User-specified plan, MOAR, SA, MOAR (no search), PZ, LOTUS, DocETL-V1
     """
     if compare_number_all:
         # Calculate and print generalization metrics for all datasets
@@ -3419,6 +3879,101 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
                 print(f"   Overall mean rel diff: {result['overall_mean_rel_diff_pct']:+.2f}%")
         else:
             print(f"❌ Failed: {result.get('error', 'Unknown error')}")
+        return
+    
+    if ver_plot:
+        # Generate plots for all datasets with only DocETL-V1, MOAR-gpt5, and MOAR-gpt5-OldDirective
+        print(f"\n📊 Generating version comparison plots for all datasets...")
+        print(f"   Methods: MOAR-gpt5, MOAR-gpt5-OldDirective, DocETL-V1")
+        
+        # Define the methods to include in ver_plot
+        ver_methods = ["mcts", "mcts_old_directive", "DocETL-V1"]
+        
+        for dataset_name in DATASETS:
+            print(f"\n📊 Generating version comparison plot for {dataset_name}...")
+            plot_result = generate_test_frontier_plot.remote(
+                dataset_name, 
+                adv_graph=True,  # Use adv_graph mode for cleaner visualization
+                methods_filter=ver_methods
+            )
+            if plot_result["success"]:
+                print(f"✅ Plot saved to: {plot_result['plot_path']}")
+                print(f"   Total points: {plot_result['total_points']}")
+                for m, count in plot_result['points_by_method'].items():
+                    if count > 0:
+                        print(f"   - {m}: {count} points")
+            else:
+                print(f"❌ Failed to generate plot for {dataset_name}: {plot_result.get('error', 'Unknown error')}")
+        
+        # Generate legend for version comparison
+        print(f"\n📊 Generating version comparison legend...")
+        legend_result = generate_ver_legend_plot.remote()
+        if legend_result["success"]:
+            print(f"✅ Legend saved to: {legend_result['plot_path']}")
+        else:
+            print(f"❌ Failed to generate legend: {legend_result.get('error', 'Unknown error')}")
+        return
+    
+    if moar_plot:
+        # Generate plot with only User-specified plan, MOAR, MOAR-Kimi, MOAR-Llama
+        print(f"\n📊 Generating MOAR variants comparison plot for {dataset}...")
+        print(f"   Methods: User-specified plan, MOAR, MOAR-Kimi, MOAR-Llama")
+        
+        # Define the methods to include
+        moar_methods = ["original", "mcts", "mcts_kimi", "mcts_llama"]
+        
+        datasets_to_plot = DATASETS if dataset == "all" else [dataset]
+        for dataset_name in datasets_to_plot:
+            print(f"\n📊 Generating MOAR variants plot for {dataset_name}...")
+            plot_result = generate_test_frontier_plot.remote(
+                dataset_name, 
+                adv_graph=True,  # Use adv_graph mode for cleaner visualization
+                methods_filter=moar_methods
+            )
+            if plot_result["success"]:
+                print(f"✅ Plot saved to: {plot_result['plot_path']}")
+                print(f"   Total points: {plot_result['total_points']}")
+                for m, count in plot_result['points_by_method'].items():
+                    if count > 0:
+                        print(f"   - {m}: {count} points")
+            else:
+                print(f"❌ Failed to generate plot for {dataset_name}: {plot_result.get('error', 'Unknown error')}")
+        return
+    
+    if plot_strong:
+        # Generate plot with User-specified plan, MOAR, SA, MOAR (no search), PZ, LOTUS, DocETL-V1
+        print(f"\n📊 Generating strong comparison plot...")
+        print(f"   Methods: User-specified plan, MOAR, SA, MOAR (no search), PZ, LOTUS, DocETL-V1")
+        
+        # Define the methods to include (include all PZ and LOTUS variants for data loading)
+        strong_methods = ["original", "mcts", "simple_baseline", "simple_baseline_strong",
+                         "PZ", "PZ_direct", "PZ_retrieval", "lotus", "LOTUS_d", "LOTUS_r&r", "DocETL-V1"]
+        
+        datasets_to_plot = DATASETS if dataset == "all" else [dataset]
+        for dataset_name in datasets_to_plot:
+            print(f"\n📊 Generating strong comparison plot for {dataset_name}...")
+            plot_result = generate_test_frontier_plot.remote(
+                dataset_name, 
+                adv_graph=True,  # Use adv_graph mode for cleaner visualization
+                methods_filter=strong_methods,
+                filter_below_original=False  # Only filter out acc=0, not below original
+            )
+            if plot_result["success"]:
+                print(f"✅ Plot saved to: {plot_result['plot_path']}")
+                print(f"   Total points: {plot_result['total_points']}")
+                for m, count in plot_result['points_by_method'].items():
+                    if count > 0:
+                        print(f"   - {m}: {count} points")
+            else:
+                print(f"❌ Failed to generate plot for {dataset_name}: {plot_result.get('error', 'Unknown error')}")
+        
+        # Generate legend for strong comparison
+        print(f"\n📊 Generating strong comparison legend...")
+        legend_result = generate_strong_legend_plot.remote()
+        if legend_result["success"]:
+            print(f"✅ Legend saved to: {legend_result['plot_path']}")
+        else:
+            print(f"❌ Failed to generate legend: {legend_result.get('error', 'Unknown error')}")
         return
     
     if compare:
@@ -3454,6 +4009,39 @@ def main(dataset: str = "cuad", method: str = "all", plot_only: bool = False, ma
             print(f"✅ Legend plot saved to: {legend_result['plot_path']}")
             if legend_result.get('local_plot_path'):
                 print(f"✅ Also saved to local: {legend_result['local_plot_path']}")
+        else:
+            print(f"❌ Failed to generate legend: {legend_result.get('error', 'Unknown error')}")
+        return
+    
+    if legend_only_ver:
+        # Generate version comparison legend plot (MOAR-gpt5, MOAR-gpt5-OldDirective, DocETL-V1)
+        print(f"\n📊 Generating version comparison legend plot...")
+        print(f"   Methods: MOAR-gpt5, MOAR-gpt5-OldDirective, DocETL-V1")
+        legend_result = generate_ver_legend_plot.remote()
+        if legend_result["success"]:
+            print(f"✅ Legend plot saved to: {legend_result['plot_path']}")
+        else:
+            print(f"❌ Failed to generate legend: {legend_result.get('error', 'Unknown error')}")
+        return
+    
+    if legend_only_moar:
+        # Generate MOAR variants legend plot (User-specified plan, MOAR, MOAR-Kimi, MOAR-Llama)
+        print(f"\n📊 Generating MOAR variants legend plot...")
+        print(f"   Methods: User-specified plan, MOAR, MOAR-Kimi, MOAR-Llama")
+        legend_result = generate_moar_legend_plot.remote()
+        if legend_result["success"]:
+            print(f"✅ Legend plot saved to: {legend_result['plot_path']}")
+        else:
+            print(f"❌ Failed to generate legend: {legend_result.get('error', 'Unknown error')}")
+        return
+    
+    if legend_only_strong:
+        # Generate strong comparison legend plot (User-specified plan, MOAR, SA, MOAR (no search), PZ, LOTUS, DocETL-V1)
+        print(f"\n📊 Generating strong comparison legend plot...")
+        print(f"   Methods: User-specified plan, MOAR, SA, MOAR (no search), PZ, LOTUS, DocETL-V1")
+        legend_result = generate_strong_legend_plot.remote()
+        if legend_result["success"]:
+            print(f"✅ Legend plot saved to: {legend_result['plot_path']}")
         else:
             print(f"❌ Failed to generate legend: {legend_result.get('error', 'Unknown error')}")
         return
