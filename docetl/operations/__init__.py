@@ -18,7 +18,10 @@ from docetl.operations.add_uuid import AddUuidOperation
 from docetl.operations.extract import ExtractOperation
 from docetl.operations.topk import TopKOperation
 
+from docetl.operations.jev_retrieve import JevRetrieveOperation
+
 mapping = {
+    "jev_retrieve": JevRetrieveOperation,
     "cluster": ClusterOperation,
     "code_filter": CodeFilterOperation,
     "code_map": CodeMapOperation,

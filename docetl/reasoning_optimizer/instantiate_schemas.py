@@ -3,7 +3,7 @@ import os
 import re
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def extract_for_variable(template_content):
@@ -1228,3 +1228,100 @@ class ArbitraryRewriteInstantiateSchema(BaseModel):
     #     ...,
     #     description="High-level explanation of the optimization strategy and expected improvements",
     # )
+
+
+class JevRetrievalTargetSchema(BaseModel):
+    name: str = Field(..., description="Short identifier for the evidence target, e.g. business_description")
+    description: str = Field(
+        ...,
+        description="Definition of the passages to retrieve for this target. Describe the evidence the "
+        "downstream operation needs, not its answer.",
+    )
+
+
+class JevRetrievalInstantiateSchema(BaseModel):
+    """
+    Schema for the jev_retrieval directive: insert a jev_retrieve operator before the target
+    operation and point the target's prompt at the retrieved passages.
+    """
+
+    name: str = Field(..., description="The name of the jev_retrieve operator")
+    document_key: str = Field(
+        ..., description="The input field holding the long text the target operation reads"
+    )
+    targets: List[JevRetrievalTargetSchema] = Field(
+        ..., description="1-32 evidence targets; usually one per kind of information the operation needs"
+    )
+    evidence_chars: int = Field(
+        ..., description="Character cap per target for the retrieved passages (not tokens)"
+    )
+    policy: str = Field(
+        default="preserve_fill",
+        description='"preserve_fill" (fill up to the cap from scored regions) or "adaptive" (only passages scoring above threshold)',
+    )
+    max_decisions: int = Field(
+        default=128,
+        description="Navigation steps (Jev requests) per target, 16-256. Cost per document is about max_decisions x $0.0001 per target at most.",
+    )
+    regions_per_request: int = Field(
+        default=4,
+        description="Sibling regions Jev scores in one request (1-8). Targets are bundled automatically so that "
+        "regions_per_request x targets per request <= 32.",
+    )
+
+    @field_validator("max_decisions")
+    @classmethod
+    def validate_max_decisions(cls, v):
+        if not 16 <= v <= 256:
+            raise ValueError("max_decisions must be between 16 and 256")
+        return v
+
+    @field_validator("regions_per_request")
+    @classmethod
+    def validate_regions_per_request(cls, v):
+        if not 1 <= v <= 8:
+            raise ValueError("regions_per_request must be between 1 and 8")
+        return v
+
+    @field_validator("targets")
+    @classmethod
+    def validate_targets(cls, v):
+        if not 1 <= len(v) <= 32:
+            raise ValueError("Provide between 1 and 32 evidence targets")
+        if len({t.name for t in v}) != len(v):
+            raise ValueError("Target names must be unique")
+        return v
+
+    @field_validator("evidence_chars")
+    @classmethod
+    def validate_evidence_chars(cls, v):
+        if v < 500:
+            raise ValueError("evidence_chars must be at least 500 characters")
+        return v
+
+    @field_validator("policy")
+    @classmethod
+    def validate_policy(cls, v):
+        if v not in ("preserve_fill", "adaptive"):
+            raise ValueError('policy must be "preserve_fill" or "adaptive"')
+        return v
+
+
+class JevSplitterSchema(BaseModel):
+    kind: str = Field(..., description='"heading", "page_break", "blank_line" or "fixed"')
+    style: Optional[str] = Field(
+        None, description="heading or page_break: a named style from the profile (preferred); otherwise null")
+    pattern: Optional[str] = Field(
+        None, description="custom regex matched at the start of a line, only if no named style fits; otherwise null")
+    chars: Optional[int] = Field(None, description="fixed: piece size in characters; otherwise null")
+
+
+class JevIndexDesignSchema(BaseModel):
+    """First jev_retrieval call: how to split every document into a hierarchy of regions."""
+
+    rationale: str = Field(..., description="What structure the documents have and why this design fits it")
+    levels: List[JevSplitterSchema] = Field(
+        default_factory=list, description="Splitters from outer to inner level (0-4)")
+    leaf_chars: int = Field(2400, description="Regions longer than this are cut into leaves (300-20000)")
+    min_chars: int = Field(200, description="Segments shorter than this are merged into a neighbor")
+    fanout: int = Field(4, description="Maximum children per node before contiguous grouping (2-16)")

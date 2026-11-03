@@ -600,6 +600,51 @@ op_topk = Operator(
 )
 
 
+op_jev_retrieve = Operator(
+    name="JevRetrieve",
+    type_llm_or_not="LLM-powered (Jev classifier, no text generation)",
+    description="""Keeps only the passages of a long text field that matter for named targets, and writes them (literal source text, in document order, separated by [...]) to a new field that downstream operators read instead of the full text.
+
+    How it works: each document is split into a hierarchy of regions (sections, then smaller pieces) by the index design (see `index`). Jev is a classifier that only answers scored yes/no questions. One Jev request shows Jev the text of up to regions_per_request sibling regions (default 4) (at most ~27 KB, about 7k tokens) and asks one question per (region, target) pair: "does region Cn contain text matching target Tk?", answered with a score from 0 to 1. A navigation step ("decision") sends one such request for the children of a region; regions scoring >= threshold are kept as evidence, and promising regions are opened further. Each target navigates separately; an identical request needed by several targets is sent once and answers all of them.
+
+    Cost: Jev charges for input tokens only (about $0.042 per million). One request is typically 2-3k input tokens (~$0.0001), so cost per document is roughly the number of decisions used times $0.0001 per target, at most max_decisions per target. Documents shorter than evidence_chars pass through with no calls.""",
+    when_to_use="Use before an LLM operation over long documents when the evidence it needs is sparse (a small part of each document, in one or a few places) but its position differs from document to document, so a fixed head/tail window cannot capture it (e.g. a particular contract clause, the passage describing an adverse reaction). Do not use when the answer depends on content spread across the whole document (summaries, counts or aggregates over all sections): every part is still needed. Do not use when the evidence sits at a fixed position such as the title page: keeping the head of the document is cheaper.",
+    required_parameters="""
+    name: Unique name for the operation
+    type: Must be "jev_retrieve"
+    text_key: Field containing the long text
+    targets: List of {name, description}. Each description defines the evidence to find (passages the downstream operation needs), not the answer. Jev accepts at most 32 questions per request and every region in a request is asked about every target in it, so targets are split automatically into bundles of 32 // regions_per_request targets (8 with the default 4). Targets in a bundle share requests; each extra bundle navigates with its own requests and adds cost. 1-3 targets is typical.
+    """,
+    optional_parameters="""
+    output_key: Field to write the passages to (default "<text_key>_jev")
+    evidence_chars: Character cap per target (default 6000; characters, not tokens). With several targets the output is the union of their passages, up to about targets x cap. Documents shorter than the cap pass through unchanged.
+    policy: "preserve_fill" (default) or "adaptive". Both use the Jev scores. "adaptive" returns only regions scoring >= threshold, which can be far below the cap or empty. "preserve_fill" keeps those and then tops up to the cap with the best-scored remaining regions from the same navigation, with no extra Jev calls (the last addition may be cut mid-sentence).
+    max_decisions: Navigation steps (Jev requests) per target (default 128). The main cost lever: fewer decisions cost less but explore less of the document.
+    threshold: Score at which a region is kept as evidence (default 0.3)
+    regions_per_request: Sibling regions Jev scores in one request (default 4). Larger values explore faster per decision and make each request bigger; they also reduce targets per bundle.
+    index: How each document is split into a hierarchy of regions, applied identically to every document. Either an IndexSpec (default: paragraphs) or a named builder:
+        IndexSpec: {levels: [...splitters, outer to inner...], leaf_chars, min_chars, fanout}. Splitters: {kind: heading, style: NAME} splits before lines of a named style (numbered, numbered_top, numbered_sub, article_section, markdown, all_caps), or {kind: heading, pattern: REGEX} for a custom line pattern; {kind: page_break} at form feeds, or {kind: page_break, style: page_number_line}; {kind: blank_line} into paragraphs; {kind: fixed, chars: N}. Regions longer than leaf_chars become sentence-bounded leaves; segments shorter than min_chars merge into a neighbor; nodes with more than fanout children are grouped. Deterministic string rules, no model calls.
+        "contract_structure": the contract-heading parser (ARTICLE / SECTION n.n), for legal documents.
+    """,
+    returns="The input documents with output_key added (selected passages) and a diagnostics field _<name>_retrieval (evidence size, decisions used, status per target)",
+    minimal_example_configuration="""
+    name: retrieve_termination_clauses
+    type: jev_retrieve
+    text_key: contract_text
+    targets:
+      - name: termination
+        description: Provisions allowing a party to terminate the agreement, including conditions and notice periods.
+    evidence_chars: 6000
+    max_decisions: 64
+    index:
+      levels:
+        - {kind: heading, style: article_section}
+        - {kind: blank_line}
+      leaf_chars: 3000
+    """,
+)
+
+
 # List of all operators
 ALL_OPERATORS = [
     op_map,
@@ -615,6 +660,7 @@ ALL_OPERATORS = [
     op_code_map,
     op_code_filter,
     op_topk,
+    op_jev_retrieve,
 ]
 
 

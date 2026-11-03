@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-30",
+  "workspace": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev",
+  "files": [
+    {
+      "bundle_path": "code/retrieval.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/retrieval.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/retrieval.py",
+      "sha256": "4d4b3ecde6877beac55f5354629f945ba584dbd5c6fdb4e1b806dfdb09a1de4e",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/navigation.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/navigation.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/navigation.py",
+      "sha256": "45899599f24905ca04cafeef407dde24a41ef36e77b5a00c04c18f9dd243263a",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/run_navigation.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/run_navigation.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/run_navigation.py",
+      "sha256": "9d2aec712ac0ac45893fc9fa26f856a7503f9b90b5e7d13561dacede718cec79",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/semantic_index.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/semantic_index.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/semantic_index.py",
+      "sha256": "f71786b946145711f4ddda252e4d8bf46a07643be68c30f71fc0e97954b2dacd",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/semantic_topic_index.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/semantic_topic_index.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/semantic_topic_index.py",
+      "sha256": "e38e8f26266a53966c0f5298a2eaf73b57a1a0bc9bb81fdf540c7cfc8fa15daf",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/_source_structure_snapshot.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/_source_structure_snapshot.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/_source_structure_snapshot.py",
+      "sha256": "a5978eacab622ddaceff8f7205cc777844bb7958b4b6eb03c3e6157d9fd67b7a",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/shared_scorer.py",
+      "source_path": "research/jev_retrieval/jev-cap-e2e-20261027-001/implementation/shared_scorer.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-cap-e2e-20261027-001/implementation/shared_scorer.py",
+      "sha256": "bda223c50f52ae504e35fa06ef30c8d77c087b2fb0ffbbf5dea24bc7ae32bd04",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/top_up.py",
+      "source_path": "research/jev_retrieval/jev-preserve-fill-20261030-001/top_up.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-preserve-fill-20261030-001/top_up.py",
+      "sha256": "fb21adc8b92f5c29e1767e35c2119bd9049a0c048fcf0dfc6979bd58f003b890",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "tests/test_navigation.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_navigation.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_navigation.py",
+      "sha256": "fd21c246a1228625ec34c6099376d52c52d6a3f65175550957a8003e1668f8ab",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "tests/test_semantic_index.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_semantic_index.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_semantic_index.py",
+      "sha256": "3a3529664e8e3d3fc79b5ea27007fdd03a2b15d61c7b7c43b3b175f633d00e11",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "tests/test_semantic_topic_index.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_semantic_topic_index.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_semantic_topic_index.py",
+      "sha256": "464fef49783d195ae6dc4d4aaf64284b953edadd342d39f887f9535f9f1f4dcb",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "tests/test_fill_cap.py",
+      "source_path": "research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_fill_cap.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-fill-cap-20261029-001/implementation/test_fill_cap.py",
+      "sha256": "5321c1b67f1f259ad34f0cf386ecf1158bef3e6875d0463d355d946ca2516ce7",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "tests/test_shared_scorer.py",
+      "source_path": "research/jev_retrieval/jev-cap-e2e-20261027-001/implementation/test_shared_scorer.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-cap-e2e-20261027-001/implementation/test_shared_scorer.py",
+      "sha256": "3bf55967d50cedfeccd9cea01c147ea548f259acc63dceef76fe3780dcac74de",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "tests/test_top_up.py",
+      "source_path": "research/jev_retrieval/jev-preserve-fill-20261030-001/test_top_up.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-preserve-fill-20261030-001/test_top_up.py",
+      "sha256": "4d6a6cc18bd1c3d9dd2d6d5e2494a4cc362db99065e32f686fd7fcba848aec8b",
+      "copy": "byte-identical"
+    },
+    {
+      "bundle_path": "code/shared_capacity.py",
+      "source_path": "research/jev_retrieval/jev-cap-e2e-20261027-001/implementation/run_campaign.py",
+      "source_absolute_path": "/Users/lindseywei/Documents/ChatGPT/MOAR-Jev/research/jev_retrieval/jev-cap-e2e-20261027-001/implementation/run_campaign.py",
+      "source_sha256": "a943372aff6eb523b7d31824ed2981f0cb6c62cbaa817a8db274acf05dece769",
+      "source_symbol": "_effective_shared_config",
+      "sha256": "9097358fc7c1b48434de8817a95e3e71edba487d665b93d0f9f60dddb90035c4",
+      "copy": "exact function body with standalone standard-library imports"
+    }
+  ]
+}
