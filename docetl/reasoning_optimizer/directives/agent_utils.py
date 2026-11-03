@@ -165,7 +165,9 @@ def agent_completion(
     Unified completion function that routes to appropriate backend.
     
     For Kimi K2 / Together AI models: Uses litellm with together_ai/ prefix.
-    For other models: Uses litellm with Azure.
+    For azure/ models, or bare names (e.g. "gpt-4.1") when AZURE_API_KEY is set: Azure.
+    For bare names without Azure credentials: OpenAI (OPENAI_API_KEY, optional OPENAI_BASE_URL).
+    For other provider prefixes (e.g. "gemini/..."): LiteLLM routing with that provider's key.
     
     Args:
         model: Model identifier.
@@ -200,16 +202,23 @@ def agent_completion(
         return response, cost
     
     else:
-        # Use litellm for Azure/OpenAI models
-        litellm_kwargs = {
-            "model": model,
-            "messages": messages,
-            "api_key": os.environ.get("AZURE_API_KEY"),
-            "api_base": os.environ.get("AZURE_API_BASE"),
-            "api_version": os.environ.get("AZURE_API_VERSION"),
-            "azure": True,
-        }
-        
+        litellm_kwargs = {"model": model, "messages": messages}
+        provider_prefix = model.split("/", 1)[0] if "/" in model else None
+        if provider_prefix == "azure" or (provider_prefix is None and os.environ.get("AZURE_API_KEY")):
+            # Azure: explicit azure/ models, or bare names when Azure credentials are configured.
+            litellm_kwargs.update({
+                "api_key": os.environ.get("AZURE_API_KEY"),
+                "api_base": os.environ.get("AZURE_API_BASE"),
+                "api_version": os.environ.get("AZURE_API_VERSION"),
+                "azure": True,
+            })
+        elif provider_prefix is None:
+            # Bare names without Azure credentials go to OpenAI (or an OpenAI-compatible gateway).
+            litellm_kwargs["api_key"] = os.environ.get("OPENAI_API_KEY")
+            if os.environ.get("OPENAI_BASE_URL"):
+                litellm_kwargs["api_base"] = os.environ["OPENAI_BASE_URL"]
+        # Other prefixes (gemini/, openai/, ...) use LiteLLM's own provider routing and keys.
+
         if response_format is not None:
             litellm_kwargs["response_format"] = response_format
         
