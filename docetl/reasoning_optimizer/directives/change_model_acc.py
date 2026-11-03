@@ -9,6 +9,7 @@ from docetl.reasoning_optimizer.instantiate_schemas import ChangeModelInstantiat
 
 from .base import (
     AVAILABLE_MODELS,
+    available_models_info,
     MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS,
     Directive,
     DirectiveTestCase,
@@ -24,7 +25,7 @@ class ChangeModelAccDirective(Directive):
         default="Op => Op* (same operation with a more accurate model choice)"
     )
     nl_description: str = Field(
-        default="Rewrites an operator to use a more powerful LLM model to optimize accuracy. Prioritizes model performance and quality over cost considerations, typically suggesting more capable models like gpt-5 for complex reasoning tasks."
+        default="Rewrites an operator to use a more powerful LLM model to optimize accuracy. Prioritizes model performance and quality over cost considerations, typically suggesting more capable models like gemini-3.1-pro-preview for complex reasoning tasks."
     )
     when_to_use: str = Field(
         default="When accuracy and quality are the primary concerns, and cost is secondary. Suitable for complex reasoning tasks, critical analysis, or when maximum model performance is needed. Usually changing to a more expensive model will improve accuracy, so you should try this directive if it has not been used in the past iterations."
@@ -42,11 +43,11 @@ class ChangeModelAccDirective(Directive):
             "  output:\n"
             "    schema:\n"
             '      analysis: "string"\n'
-            "  model: gpt-4o-mini\n"
+            "  model: gemini-3.5-flash-lite\n"
             "\n"
             "Example InstantiateSchema:\n"
             "{\n"
-            '  "model": "gpt-5"\n'
+            '  "model": "gemini-3.1-pro-preview"\n'
             "}"
         ),
     )
@@ -56,35 +57,7 @@ class ChangeModelAccDirective(Directive):
         description="The allowed list of models to choose from",
     )
 
-    model_info: str = Field(
-        default=(
-            """
-            OpenAI-MRCR evaluates a model's ability to locate and disambiguate multiple well-hidden "needles" within a large context.
-            Below are the actual performance scores for the 2-needle retrieval task at various context lengths. Use these results to compare the retrieval capabilities of each model.
-            The below results are the mean match ratio.
-
-            Context Length | gpt-5 | gpt-5-nano | gpt-4o-mini | gemini-2.5-pro | gemini-2.5-flash | gpt-4.1 | gpt-4.1-mini | gpt-4.1-nano | gemini-2.5-flash-lite
-            ---------------|-------|------------|-------------|----------------|------------------|---------|--------------|--------------|----------------------
-            128k           | 97%   | 44%        | 25%         | 83.6%          | 86.2%            | 61.3%   | 47.1%        | 36.7%        | 39.9%
-            1M             | -     | -          | -           | 62.8%          | 60.0%            | 45.9%   | 34.6%        | 14.2%        | 18.1%
-
-            The context window and pricing details for each model are shown below (token prices are per 1 million tokens):
-            | Family         | Model                      | Input Price /1M                 | Output Price /1M                  | Context Window (API)       |
-            |----------------|----------------------------|---------------------------------|-----------------------------------|-----------------------------|
-            | **GPT-5**      | azure/gpt-5                | $1.25                           | $10.00                            | 400K (272K in + 128K out) |
-            |                | azure/gpt-5-mini           | $0.25                           | $2.00                             | 400K                       |
-            |                | azure/gpt-5-nano           | $0.05                           | $0.40                             | 400K                       |
-            | **GPT-4.1**    | azure/gpt-4.1              | $2.00                           | $8.00                             | 1M                         |
-            |                | azure/gpt-4.1-mini         | $0.40                           | $1.60                             | 1M                         |
-            |                | azure/gpt-4.1-nano         | $0.10                           | $0.40                             | 1M                         |
-            | **GPT-4o**     | azure/gpt-4o               | $2.50                           | $10.00                            | 128K                       |
-            |                | azure/gpt-4o-mini          | $0.15                           | $0.60                             | 128K (≈16K output cap)     |
-            | **Gemini 2.5** | gemini/gemini-2.5-pro      | $1.25 (≤200K) / $2.50 (>200K)  | $10.00 (≤200K) / $15.00 (>200K)  | 1M (2M soon)               |
-            |                | gemini/gemini-2.5-flash    | $0.30                           | $2.50                             | 1M                         |
-            |                | gemini/gemini-2.5-flash-lite | $0.10                         | $0.40                             | 1M                         |
-            """
-        ),
-    )
+    model_info: str = Field(default_factory=available_models_info)
 
     test_cases: List[DirectiveTestCase] = Field(
         default_factory=lambda: [
@@ -96,10 +69,10 @@ class ChangeModelAccDirective(Directive):
                     "type": "map",
                     "prompt": "Analyze the legal implications and potential risks in this complex contract: {{ input.contract }}",
                     "output": {"schema": {"analysis": "string"}},
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["analyze_legal_implications"],
-                expected_behavior="Should recommend gpt-5 for complex legal analysis requiring strong reasoning",
+                expected_behavior="Should recommend gemini-3.1-pro-preview for complex legal analysis requiring strong reasoning",
                 should_pass=True,
             ),
             DirectiveTestCase(
@@ -110,10 +83,10 @@ class ChangeModelAccDirective(Directive):
                     "type": "map",
                     "prompt": "Perform detailed statistical analysis and provide research insights: {{ input.data }}",
                     "output": {"schema": {"insights": "string"}},
-                    "model": "gpt-5-nano",
+                    "model": "gemini-3.1-flash-lite",
                 },
                 target_ops=["analyze_research_data"],
-                expected_behavior="Should recommend gpt-5 for accurate scientific analysis despite higher cost",
+                expected_behavior="Should recommend gemini-3.1-pro-preview for accurate scientific analysis despite higher cost",
                 should_pass=True,
             ),
             DirectiveTestCase(
@@ -124,10 +97,10 @@ class ChangeModelAccDirective(Directive):
                     "type": "map",
                     "prompt": "Analyze medical symptoms and provide diagnostic insights: {{ input.symptoms }}",
                     "output": {"schema": {"diagnosis": "string"}},
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["medical_diagnosis_support"],
-                expected_behavior="Should recommend gpt-5 for critical medical analysis requiring highest accuracy",
+                expected_behavior="Should recommend gemini-3.1-pro-preview for critical medical analysis requiring highest accuracy",
                 should_pass=True,
             ),
         ]
@@ -165,9 +138,9 @@ class ChangeModelAccDirective(Directive):
             f"• If the task requires processing very long context (1M+ tokens)\n\n"
             f"Based on your analysis of task complexity, select the model that will provide the most accurate response:\n"
             f"• For simple extraction or formatting tasks: Consider efficient models from the available options\n"
-            f"• For moderate complexity tasks requiring some reasoning: Use capable models from gpt-5 or gemini series\n"
-            f"• For complex reasoning, analysis, interpretation, legal/medical tasks, or critical decisions: Strongly prefer the most advanced models from gpt-5 or gemini series\n"
-            f"• For tasks requiring very long context (1M+ tokens): Consider models with extended context like gpt-4.1 series or gemini models\n"
+            f"• For moderate complexity tasks requiring some reasoning: Use capable models from gemini-3.1-pro-preview or gemini series\n"
+            f"• For complex reasoning, analysis, interpretation, legal/medical tasks, or critical decisions: Strongly prefer the most advanced models from gemini-3.1-pro-preview or gemini series\n"
+            f"• For tasks requiring very long context (1M+ tokens): Consider models with extended context like gemini-3.8-flash series or gemini models\n"
             f"• For highly specialized or extremely complex cognitive tasks: Use the most powerful model available\n\n"
             f"Remember: The goal is maximum accuracy given the intelligence and context requirements of the specific task.\n"
             f"You have a list of allowed models to choose from: {str(self.allowed_model_list)}.\n\n"

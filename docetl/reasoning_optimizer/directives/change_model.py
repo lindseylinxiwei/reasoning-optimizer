@@ -9,6 +9,7 @@ from docetl.reasoning_optimizer.instantiate_schemas import ChangeModelInstantiat
 
 from .base import (
     AVAILABLE_MODELS,
+    available_models_info,
     MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS,
     Directive,
     DirectiveTestCase,
@@ -22,7 +23,7 @@ class ChangeModelDirective(Directive):
         default="Op => Op* (same operation with a different model choice)"
     )
     nl_description: str = Field(
-        default="Rewrites an operator to use a different LLM model based on task requirements. Generally, simpler tasks like extraction or classification may work well with cheaper models (gpt-4o-mini, gpt-5-nano), while complex reasoning tasks often benefit from more powerful models (gpt-5), though actual performance and constraints should guide the choice."
+        default="Rewrites an operator to use a different LLM model based on task requirements. Generally, simpler tasks like extraction or classification may work well with cheaper models (gemini-3.1-flash-lite, gemini-3.5-flash-lite), while complex reasoning tasks often benefit from more powerful models (gemini-3.1-pro-preview), though actual performance and constraints should guide the choice."
     )
     when_to_use: str = Field(
         default="When the current model choice may not be optimal for the task requirements, considering factors like task complexity, performance needs, cost constraints, and quality requirements."
@@ -41,11 +42,11 @@ class ChangeModelDirective(Directive):
             "  output:\n"
             "    schema:\n"
             '      insights_summary: "string"\n'
-            "  model: gpt-5\n"
+            "  model: gemini-3.1-pro-preview\n"
             "\n"
             "Example InstantiateSchema:\n"
             "{\n"
-            '  "model": "gpt-4o-mini"\n'
+            '  "model": "gemini-3.5-flash-lite"\n'
             "}"
         ),
     )
@@ -55,33 +56,7 @@ class ChangeModelDirective(Directive):
         description="The allowed list of models to choose from",
     )
 
-    model_info: str = Field(
-        default=(
-            """
-            OpenAI-MRCR evaluates a model's ability to locate and disambiguate multiple well-hidden "needles" within a large context.
-            Below are the actual performance scores for the 8-needle retrieval task at various context lengths. Use these results to compare the retrieval capabilities of each model.
-            The below results are the mean match ratio.
-
-            Input Tokens (1000s) | GPT-5   | GPT-5 nano   | GPT-4o mini
-            ---------------------|---------|--------------|-------------------|
-            8                    | 99%     | 69%          | 32%               | 
-            16                   | 100%    | 64%          | 30%               | 
-            32                   | 96%     | 55%          | 27%               |
-            64                   | 98%     | 45%          | 25%               | 
-            128                  | 97%     | 44%          | 25%               | 
-            256                  | 92%     | 40%          | -                 | 
-              
-
-            The context window and pricing details for each model are shown below (token prices are per 1 million tokens):
-            Model              | GPT-5-nano   | GPT-4o-mini | GPT-5     
-            -------------------|--------------|-------------|----------
-            Context Window     | 400,000      | 128,000     | 400,000    
-            Max Output Tokens  | 128,000      | 16,384      | 128,000   
-            Input Token Price  | $0.05        | $0.15       | $1.25    
-            Output Token Price | $0.40        | $0.60       | $10    
-        """
-        ),
-    )
+    model_info: str = Field(default_factory=available_models_info)
 
     test_cases: List[DirectiveTestCase] = Field(
         default_factory=lambda: [
@@ -93,10 +68,10 @@ class ChangeModelDirective(Directive):
                     "type": "map",
                     "prompt": "Extract person names from: {{ input.text }}",
                     "output": {"schema": {"names": "list[str]"}},
-                    "model": "gpt-5",
+                    "model": "gemini-3.1-pro-preview",
                 },
                 target_ops=["extract_names"],
-                expected_behavior="Should recommend gpt-4o-mini or gpt-5-nano for cost savings on simple task",
+                expected_behavior="Should recommend gemini-3.1-flash-lite or gemini-3.5-flash-lite for cost savings on simple task",
                 should_pass=True,
             ),
             DirectiveTestCase(
@@ -107,10 +82,10 @@ class ChangeModelDirective(Directive):
                     "type": "map",
                     "prompt": "Analyze the legal implications and potential risks in this complex contract: {{ input.contract }}",
                     "output": {"schema": {"analysis": "string"}},
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["analyze_legal_implications"],
-                expected_behavior="Should recommend gpt-5 for complex legal analysis requiring strong reasoning",
+                expected_behavior="Should recommend gemini-3.1-pro-preview for complex legal analysis requiring strong reasoning",
                 should_pass=True,
             ),
             DirectiveTestCase(
@@ -121,10 +96,10 @@ class ChangeModelDirective(Directive):
                     "type": "map",
                     "prompt": "Summarize this document in 2-3 sentences: {{ input.document }}",
                     "output": {"schema": {"summary": "str"}},
-                    "model": "gpt-5",
+                    "model": "gemini-3.1-pro-preview",
                 },
                 target_ops=["batch_document_summary"],
-                expected_behavior="Should recommend faster/cheaper model like gpt-4o-mini or gpt-5-nano for high-volume simple summarization",
+                expected_behavior="Should recommend faster/cheaper model like gemini-3.1-flash-lite or gemini-3.5-flash-lite for high-volume simple summarization",
                 should_pass=True,
             ),
         ]
@@ -154,8 +129,8 @@ class ChangeModelDirective(Directive):
                 f"Directive: {self.name}\n"
                 f"Your task is to instantiate this directive by suggesting a better model for executing the original operation.\n\n"
                 f"MODEL SELECTION CONSIDERATIONS:\n"
-                f"• Generally, simpler tasks (extraction, basic classification, straightforward summarization) may work well with cheaper models like gpt-4o-mini or gpt-5-nano\n"
-                f"• Complex reasoning tasks (analysis, interpretation, multi-step thinking, legal/medical analysis) often benefit from more powerful models like gpt-5\n"
+                f"• Generally, simpler tasks (extraction, basic classification, straightforward summarization) may work well with cheaper models like gemini-3.1-flash-lite or gemini-3.5-flash-lite\n"
+                f"• Complex reasoning tasks (analysis, interpretation, multi-step thinking, legal/medical analysis) often benefit from more powerful models like gemini-3.1-pro-preview\n"
                 f"• However, consider actual performance needs, quality requirements, and cost constraints when making the choice\n"
                 f"• Sometimes a powerful model may be needed for seemingly simple tasks if quality is critical, or a cheaper model may suffice for complex tasks if budget is constrained\n\n"
                 f"You have a list of allowed models to choose from: {str(self.allowed_model_list)}.\n\n"

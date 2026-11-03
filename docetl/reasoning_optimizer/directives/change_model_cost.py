@@ -296,10 +296,17 @@ def get_cheaper_models(current_model: str, dataset: str) -> List[str]:
 
 from .base import (
     AVAILABLE_MODELS,
+    available_models_info,
     MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS,
     Directive,
     DirectiveTestCase,
 )
+
+# The tables above are historical measurements on GPT / Gemini 2.5 models, kept for reference.
+# Only models in AVAILABLE_MODELS can be proposed or used by the search, so drop the rest here.
+MODEL_STATS = {ds: {m: v for m, v in t.items() if m in AVAILABLE_MODELS} for ds, t in MODEL_STATS.items()}
+MODEL_COSTS = {ds: {m: v for m, v in t.items() if m in AVAILABLE_MODELS} for ds, t in MODEL_COSTS.items()}
+FRONTIER_MODELS = {ds: {m for m in t if m in AVAILABLE_MODELS} for ds, t in FRONTIER_MODELS.items()}
 
 
 def create_model_specific_directives(current_model: str):
@@ -320,7 +327,7 @@ class ChangeModelCostDirective(Directive):
         default="Op => Op* (same operation with a more cost-effective model choice)"
     )
     nl_description: str = Field(
-        default="Rewrites an operator to use a more cost-effective LLM model to optimize expenses. Prioritizes cost savings while maintaining adequate performance, typically suggesting cheaper models like gpt-4o-mini or gpt-5-nano for simpler tasks."
+        default="Rewrites an operator to use a more cost-effective LLM model to optimize expenses. Prioritizes cost savings while maintaining adequate performance, typically suggesting cheaper models like gemini-3.1-flash-lite or gemini-3.5-flash-lite for simpler tasks."
     )
     when_to_use: str = Field(
         default="When cost optimization is the primary concern and the task can be performed adequately by a less expensive model. Suitable for simple extraction, basic classification, or high-volume processing where budget constraints are important."
@@ -338,11 +345,11 @@ class ChangeModelCostDirective(Directive):
             "  output:\n"
             "    schema:\n"
             '      names: "list[str]"\n'
-            "  model: gpt-5\n"
+            "  model: gemini-3.1-pro-preview\n"
             "\n"
             "Example InstantiateSchema:\n"
             "{\n"
-            '  "model": "gpt-4o-mini"\n'
+            '  "model": "gemini-3.5-flash-lite"\n'
             "}"
         ),
     )
@@ -357,35 +364,7 @@ class ChangeModelCostDirective(Directive):
         description="The specific target model for this directive instance",
     )
 
-    model_info: str = Field(
-        default=(
-            """
-            OpenAI-MRCR evaluates a model's ability to locate and disambiguate multiple well-hidden "needles" within a large context.
-            Below are the actual performance scores for the 2-needle retrieval task at various context lengths. Use these results to compare the retrieval capabilities of each model.
-            The below results are the mean match ratio.
-
-            Context Length | gpt-5 | gpt-5-nano | gpt-4o-mini | gemini-2.5-pro | gemini-2.5-flash | gpt-4.1 | gpt-4.1-mini | gpt-4.1-nano | gemini-2.5-flash-lite
-            ---------------|-------|------------|-------------|----------------|------------------|---------|--------------|--------------|----------------------
-            128k           | 97%   | 44%        | 25%         | 83.6%          | 86.2%            | 61.3%   | 47.1%        | 36.7%        | 39.9%
-            1M             | -     | -          | -           | 62.8%          | 60.0%            | 45.9%   | 34.6%        | 14.2%        | 18.1%
-
-            The context window and pricing details for each model are shown below (token prices are per 1 million tokens):
-            | Family         | Model                      | Input Price /1M                 | Output Price /1M                  | Context Window (API)       |
-            |----------------|----------------------------|---------------------------------|-----------------------------------|-----------------------------|
-            | **GPT-5**      | azure/gpt-5                | $1.25                           | $10.00                            | 400K (272K in + 128K out) |
-            |                | azure/gpt-5-mini           | $0.25                           | $2.00                             | 400K                       |
-            |                | azure/gpt-5-nano           | $0.05                           | $0.40                             | 400K                       |
-            | **GPT-4.1**    | azure/gpt-4.1              | $2.00                           | $8.00                             | 1M                         |
-            |                | azure/gpt-4.1-mini         | $0.40                           | $1.60                             | 1M                         |
-            |                | azure/gpt-4.1-nano         | $0.10                           | $0.40                             | 1M                         |
-            | **GPT-4o**     | azure/gpt-4o               | $2.50                           | $10.00                            | 128K                       |
-            |                | azure/gpt-4o-mini          | $0.15                           | $0.60                             | 128K (≈16K output cap)     |
-            | **Gemini 2.5** | gemini/gemini-2.5-pro      | $1.25 (≤200K) / $2.50 (>200K)  | $10.00 (≤200K) / $15.00 (>200K)  | 1M (2M soon)               |
-            |                | gemini/gemini-2.5-flash    | $0.30                           | $2.50                             | 1M                         |
-            |                | gemini/gemini-2.5-flash-lite | $0.10                         | $0.40                             | 1M                         |
-            """
-        ),
-    )
+    model_info: str = Field(default_factory=available_models_info)
 
     test_cases: List[DirectiveTestCase] = Field(
         default_factory=lambda: [
@@ -397,10 +376,10 @@ class ChangeModelCostDirective(Directive):
                     "type": "map",
                     "prompt": "Extract person names from: {{ input.text }}",
                     "output": {"schema": {"names": "list[str]"}},
-                    "model": "gpt-5",
+                    "model": "gemini-3.1-pro-preview",
                 },
                 target_ops=["extract_names"],
-                expected_behavior="Should recommend gpt-4o-mini or gpt-5-nano for cost savings on simple task",
+                expected_behavior="Should recommend gemini-3.1-flash-lite or gemini-3.5-flash-lite for cost savings on simple task",
                 should_pass=True,
             ),
             DirectiveTestCase(
@@ -411,10 +390,10 @@ class ChangeModelCostDirective(Directive):
                     "type": "map",
                     "prompt": "Summarize this document in 2-3 sentences: {{ input.document }}",
                     "output": {"schema": {"summary": "str"}},
-                    "model": "gpt-5",
+                    "model": "gemini-3.1-pro-preview",
                 },
                 target_ops=["batch_document_summary"],
-                expected_behavior="Should recommend cheaper model like gpt-4o-mini or gpt-5-nano for high-volume simple summarization",
+                expected_behavior="Should recommend cheaper model like gemini-3.1-flash-lite or gemini-3.5-flash-lite for high-volume simple summarization",
                 should_pass=True,
             ),
             DirectiveTestCase(
@@ -425,7 +404,7 @@ class ChangeModelCostDirective(Directive):
                     "type": "map",
                     "prompt": "Classify the sentiment of this text as positive, negative, or neutral: {{ input.text }}",
                     "output": {"schema": {"sentiment": "string"}},
-                    "model": "gpt-5",
+                    "model": "gemini-3.1-pro-preview",
                 },
                 target_ops=["classify_sentiment"],
                 expected_behavior="Should recommend cheaper model for basic sentiment classification to reduce costs",
@@ -458,9 +437,9 @@ class ChangeModelCostDirective(Directive):
             f"Your task is to instantiate this directive by suggesting the cheapest model that meets the requirements for executing the original operation.\n\n"
             f"COST OPTIMIZATION STRATEGY:\n"
             f"• Choose the cheapest model that meets the task requirements\n"
-            f"• For tasks requiring ultra-long context (1M+ context window), use gpt-4.1 series or gemini models\n"
-            f"• For tasks that can work with document samples or fit within 272k context window, use gpt-5-nano\n"
-            f"• For simple tasks (extraction, basic classification, straightforward summarization), use the cheapest available model like gpt-4o-mini or gpt-5-nano\n"
+            f"• For tasks requiring ultra-long context (1M+ context window), use gemini-3.8-flash series or gemini models\n"
+            f"• For tasks that can work with document samples or fit within 272k context window, use gemini-3.1-flash-lite\n"
+            f"• For simple tasks (extraction, basic classification, straightforward summarization), use the cheapest available model like gemini-3.1-flash-lite or gemini-3.5-flash-lite\n"
             f"• For high-volume processing where cost accumulates quickly, prioritize the most economical option\n"
             f"• Only use expensive models if the task absolutely requires capabilities not available in cheaper alternatives\n"
             f"• Consider document length and context requirements when selecting models\n\n"

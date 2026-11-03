@@ -188,6 +188,10 @@ class MCTS:
         self.action_space_exhausted = False
 
         if build_first_layer:
+            if not MODEL_COSTS.get(dataset_name):
+                raise ValueError(
+                    "build_first_layer reuses cached per-model runs (GPT / Gemini 2.5), and none of those models "
+                    "is in AVAILABLE_MODELS. Run without build_first_layer.")
             print("🔄 Building first layer of the pipeline manually...")
             output_dir = str(Path(VOLUME_MOUNT_PATH) / "outputs")
             for model_yaml_path in first_layer_yaml_paths[dataset_name]:

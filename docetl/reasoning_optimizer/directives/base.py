@@ -9,7 +9,27 @@ from pydantic import BaseModel, Field
 MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS = 3
 DEFAULT_MODEL = "gpt-4.1"
 DEFAULT_MAX_TPM = 5000000
-AVAILABLE_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+# Models the optimizer may switch operators to. Gemini 3.x only: this project has no OpenAI or
+# Azure access, and Gemini 2.5 is no longer available to new API users (checked 2026-11-02).
+AVAILABLE_MODELS = [
+    "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash",
+    "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview",
+]
+
+
+def available_models_info() -> str:
+    """Price table for AVAILABLE_MODELS from LiteLLM's model cost map (USD per 1M tokens)."""
+    from litellm import model_cost
+
+    rows = ["| Model | Input /1M | Output /1M | Context window |", "|---|---|---|---|"]
+    for name in AVAILABLE_MODELS:
+        info = model_cost.get(f"gemini/{name}", {})
+        price = lambda key: f"${info[key] * 1e6:.2f}" if info.get(key) else "?"
+        window = info.get("max_input_tokens")
+        rows.append(f"| gemini/{name} | {price('input_cost_per_token')} | {price('output_cost_per_token')} | "
+                    f"{f'{window // 1000}K' if window else '?'} |")
+    return ("Prices from LiteLLM's model cost map; no accuracy benchmarks are available for these models, "
+            "so judge capability from the model family (flash-lite < flash < pro).\n" + "\n".join(rows))
 DEFAULT_OUTPUT_DIR = "./outputs"
 
 
