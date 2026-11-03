@@ -6,6 +6,12 @@ This script runs the MCTS-based optimization for DocETL pipelines.
 It's extracted from the MCTS folder to provide a clean experiment interface.
 """
 
+# Load API keys from the repository-root .env before DocETL is imported (DocETL's own
+# load_dotenv() would otherwise pick up a package-level .env first).
+from pathlib import Path as _Path
+from dotenv import load_dotenv as _load_dotenv
+_load_dotenv(_Path(__file__).resolve().parents[2] / ".env")
+
 import os
 import json
 import argparse

@@ -20,6 +20,12 @@ Config schema (example):
 
 from __future__ import annotations
 
+# Load API keys from the repository-root .env before DocETL is imported (DocETL's own
+# load_dotenv() would otherwise pick up a package-level .env first).
+from pathlib import Path as _Path
+from dotenv import load_dotenv as _load_dotenv
+_load_dotenv(_Path(__file__).resolve().parents[2] / ".env")
+
 import argparse
 import json
 import sys
