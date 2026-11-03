@@ -192,6 +192,13 @@ class DocSummarizationDirective(Directive):
         ]
     )
 
+    # Shared data view: the same trimmed text for every operator (see data_views.py).
+    view_technique: str = "summarization"
+
+    def view_ops(self, config, text_key, model, **kwargs):
+        from docetl.reasoning_optimizer.data_views import view_ops
+        return view_ops("summarization", config, text_key, model, **kwargs)
+
     def __eq__(self, other):
         return isinstance(other, DocSummarizationDirective)
 

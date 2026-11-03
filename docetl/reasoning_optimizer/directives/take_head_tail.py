@@ -177,6 +177,13 @@ class TakeHeadTailDirective(Directive):
         ]
     )
 
+    # Shared data view: the same trimmed text for every operator (see data_views.py).
+    view_technique: str = "head_tail"
+
+    def view_ops(self, config, text_key, model, **kwargs):
+        from docetl.reasoning_optimizer.data_views import view_ops
+        return view_ops("head_tail", config, text_key, model, **kwargs)
+
     def __eq__(self, other):
         return isinstance(other, TakeHeadTailDirective)
 
