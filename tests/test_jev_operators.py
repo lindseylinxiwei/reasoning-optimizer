@@ -34,7 +34,9 @@ class JevTests(unittest.TestCase):
             output, map_cost = MapOperation(runner, map_config, "jev", 1).execute(retained)
         self.assertEqual(output, [{"id": 1, "text": "solar", "sector": "energy"}])
         self.assertEqual(records, [{"id": 1, "text": "solar"}, {"id": 2, "text": "unrelated"}])
-        self.assertEqual(seen[0]["state"], "Keep sustainability reports: solar")
+        # The filter sends both documents concurrently, so their request order is not fixed.
+        self.assertEqual({s["state"] for s in seen[:2]},
+                         {"Keep sustainability reports: solar", "Keep sustainability reports: unrelated"})
         self.assertEqual(seen[-1]["questions"]["sector"]["criteria"], {"energy": None, "other": None})
         self.assertEqual(len(seen), 3)
         self.assertAlmostEqual(filter_cost + map_cost, 300 * 0.042 / 1_000_000)
