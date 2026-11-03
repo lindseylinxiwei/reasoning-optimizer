@@ -196,14 +196,42 @@ class DataAnalyzer:
     """Handles data analysis and documentation loading."""
     
     @staticmethod
-    def load_documentation(doc_path: str = "experiments/reasoning/data/operators_documentation.txt") -> str:
-        """Load operator documentation."""
+    def load_documentation(doc_path: str = "experiments/reasoning/data/operators_documentation.txt", 
+                          strong: bool = False) -> str:
+        """Load operator documentation.
+        
+        Args:
+            doc_path: Path to the main operators documentation file.
+            strong: If True, also loads rewrite directives documentation for enhanced context.
+        
+        Returns:
+            Combined documentation string.
+        """
         doc_file = Path(doc_path)
         if not doc_file.exists():
             doc_file = Path(VOLUME_MOUNT_PATH) / doc_path
         
         with open(doc_file, 'r') as f:
-            return f.read()
+            documentation = f.read()
+        
+        # If strong mode, append rewrite directives documentation
+        if strong:
+            rewrite_doc_path = "experiments/reasoning/data/rewrite_directives_documentation.txt"
+            rewrite_doc_file = Path(rewrite_doc_path)
+            if not rewrite_doc_file.exists():
+                rewrite_doc_file = Path(VOLUME_MOUNT_PATH) / rewrite_doc_path
+            
+            if rewrite_doc_file.exists():
+                with open(rewrite_doc_file, 'r') as f:
+                    rewrite_docs = f.read()
+                documentation += "\n\n" + "=" * 80 + "\n"
+                documentation += "REWRITE DIRECTIVES DOCUMENTATION\n"
+                documentation += "=" * 80 + "\n\n"
+                documentation += rewrite_docs
+            else:
+                print(f"⚠️  Warning: Rewrite directives documentation not found at {rewrite_doc_path}")
+        
+        return documentation
     
     @staticmethod
     def load_sample_data(dataset: str, limit: int = 5) -> List[Dict]:
@@ -318,8 +346,9 @@ class AgentCommunicator:
 class SimpleBaselineAgent:
     """Simplified baseline agent that uses tool calling to generate pipelines."""
     
-    def __init__(self, model: str = DEFAULT_MODEL):
+    def __init__(self, model: str = DEFAULT_MODEL, strong: bool = False):
         self.model = model
+        self.strong = strong  # If True, uses enhanced documentation with rewrite directives
         self.communicator = AgentCommunicator(model, self)
         self.documentation = None
         self.original_config = None
@@ -329,7 +358,7 @@ class SimpleBaselineAgent:
         
     def load_resources(self, dataset: str, yaml_path: str = None):
         """Load documentation and original pipeline."""
-        self.documentation = DataAnalyzer.load_documentation()
+        self.documentation = DataAnalyzer.load_documentation(strong=self.strong)
         
         # Load original pipeline
         if yaml_path:
@@ -632,23 +661,38 @@ class SimpleBaselineAgent:
 def run_simple_baseline_experiment(dataset: str, output_dir: str = None, model: str = DEFAULT_MODEL,
                                  experiment_name: str = None, ground_truth_path: str = None,
                                  original_query_result: Dict[str, Any] | None = None, 
-                                 yaml_path: str = None) -> Dict[str, Any]:
-    """Run the simple baseline experiment for a dataset."""
+                                 yaml_path: str = None, strong: bool = False) -> Dict[str, Any]:
+    """Run the simple baseline experiment for a dataset.
+    
+    Args:
+        dataset: Name of the dataset to process.
+        output_dir: Directory to save outputs.
+        model: LLM model to use.
+        experiment_name: Name for this experiment run.
+        ground_truth_path: Path to ground truth file for evaluation.
+        original_query_result: Pre-executed baseline result if available.
+        yaml_path: Path to pipeline YAML file.
+        strong: If True, uses enhanced documentation with rewrite directives.
+    
+    Returns:
+        Dictionary containing experiment results.
+    """
     
     # Setup
     if output_dir is None:
         output_dir = os.environ.get('EXPERIMENT_OUTPUT_DIR', DEFAULT_OUTPUT_DIR)
     if experiment_name is None:
-        experiment_name = f"simple_baseline_{dataset}"
+        experiment_name = f"simple_baseline{'_strong' if strong else ''}_{dataset}"
     
     exp_dir = Path(output_dir) / experiment_name
     exp_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"🚀 Running Simple Baseline Experiment")
+    mode_str = "Strong Mode (with rewrite directives)" if strong else "Standard Mode"
+    print(f"🚀 Running Simple Baseline Experiment - {mode_str}")
     print(f"Dataset: {dataset}, Model: {model}, Output: {exp_dir}")
     
     # Initialize agent and executor
-    agent = SimpleBaselineAgent(model=model)
+    agent = SimpleBaselineAgent(model=model, strong=strong)
     agent.start_time = time.time()  # Track experiment start time
     agent.load_resources(dataset, yaml_path)
     executor = PipelineExecutor(exp_dir)
@@ -810,6 +854,7 @@ def run_simple_baseline_experiment(dataset: str, output_dir: str = None, model: 
         "dataset": dataset,
         "operators": operators,
         "experiment_name": experiment_name,
+        "strong_mode": strong,  # Track whether strong mode was used
         "total_search_cost": agent.total_search_cost,  # Add LLM call costs
         "total_cost": results.get("cost", 0.0) + agent.total_search_cost,  # Pipeline + LLM costs
         "total_latency": total_latency,  # Add total latency
@@ -833,8 +878,12 @@ def run_simple_baseline_experiment(dataset: str, output_dir: str = None, model: 
 def run_simple_baseline_remote(dataset: str, output_dir: str = None, model: str = DEFAULT_MODEL,
                               experiment_name: str = None, ground_truth_path: str = None,
                               original_query_result: Dict[str, Any] | None = None,
-                              yaml_path: str = None):
-    """Modal remote function for running simple baseline."""
+                              yaml_path: str = None, strong: bool = False):
+    """Modal remote function for running simple baseline.
+    
+    Args:
+        strong: If True, uses enhanced documentation with rewrite directives.
+    """
     os.environ["EXPERIMENT_OUTPUT_DIR"] = str(Path(VOLUME_MOUNT_PATH) / "outputs")
     
     resolved_output_dir = PathResolver.resolve_in_volume(output_dir) if output_dir else None
@@ -848,7 +897,8 @@ def run_simple_baseline_remote(dataset: str, output_dir: str = None, model: str 
         experiment_name=experiment_name,
         ground_truth_path=ground_truth_path,
         original_query_result=original_query_result,
-        yaml_path=yaml_path
+        yaml_path=yaml_path,
+        strong=strong
     )
     
     volume.commit()
@@ -857,8 +907,11 @@ def run_simple_baseline_remote(dataset: str, output_dir: str = None, model: str 
 @app.local_entrypoint()
 def modal_main_simple_baseline(dataset: str, experiment_name: str | None = None,
                               output_dir: str | None = None, model: str = DEFAULT_MODEL,
-                              ground_truth: str | None = None):
+                              ground_truth: str | None = None, strong: bool = False):
     """Modal entrypoint for simple baseline.
+    
+    Args:
+        strong: If True, uses enhanced documentation with rewrite directives.
     
     Note: original_query_result cannot be passed via CLI, use programmatic calls instead.
     """
@@ -868,7 +921,8 @@ def modal_main_simple_baseline(dataset: str, experiment_name: str | None = None,
         model=model,
         experiment_name=experiment_name,
         ground_truth_path=ground_truth,
-        original_query_result=None
+        original_query_result=None,
+        strong=strong
     )
 
 def main():
@@ -880,6 +934,8 @@ def main():
     parser.add_argument("--output_dir", type=str)
     parser.add_argument("--experiment_name", type=str)
     parser.add_argument("--ground_truth", type=str, help="Path to ground truth file")
+    parser.add_argument("--strong", action="store_true", 
+                       help="Use strong mode with enhanced documentation (includes rewrite directives)")
     
     args = parser.parse_args()
     
@@ -888,7 +944,8 @@ def main():
         output_dir=args.output_dir,
         model=args.model,
         experiment_name=args.experiment_name,
-        ground_truth_path=args.ground_truth
+        ground_truth_path=args.ground_truth,
+        strong=args.strong
     )
     
     if results["success"]:
