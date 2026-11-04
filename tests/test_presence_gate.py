@@ -145,6 +145,10 @@ def test_category_gate_wraps_only_the_gated_items():
     assert "8. Governing Law" in on and "34. Audit Rights" not in on
     assert "1. Document Name" in on                     # ungated categories stay
     assert "do not output them" in on
+    off = render(clause_presence_governing_law=False, clause_presence_audit_rights=False)
+    assert "8. Governing Law" not in off and "7. Notice to Terminate Renewal" in off
+    assert "\n\n\n" not in off.split("do not output")[0]  # removed lines leave no blank lines behind
+    assert off.count("\n") == on.count("\n") - 1  # only governing_law differs
     assert check["checks"][0] == {"key": "governing_law", "question": "Does the text state the governing law?"}
 
 

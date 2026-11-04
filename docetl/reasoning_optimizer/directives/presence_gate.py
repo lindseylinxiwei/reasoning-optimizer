@@ -235,10 +235,12 @@ class PresenceGateDirective(Directive):
                 raise ValueError(f"prompt fragments of {k1!r} and {k2!r} overlap")
         out, pos = [], 0
         for s, e, key in spans:
+            if prompt[e:e + 1] == "\n":  # drop the line break with the line, so no blank lines remain
+                e += 1
             out += [prompt[pos:s], f"{{% if input.{prefix}{key} %}}{prompt[s:e]}{{% endif %}}"]
             pos = e
         out.append(prompt[pos:])
-        return "".join(out) + ABSENT_NOTE
+        return "".join(out).rstrip() + ABSENT_NOTE
 
     def apply(self, ops_list: List[Dict], target_op: str, rewrite: PresenceGateInstantiateSchema) -> List[Dict]:
         new_ops_list = deepcopy(ops_list)
