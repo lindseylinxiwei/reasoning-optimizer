@@ -19,9 +19,11 @@ from docetl.operations.extract import ExtractOperation
 from docetl.operations.topk import TopKOperation
 
 from docetl.operations.jev_retrieve import JevRetrieveOperation
+from docetl.operations.presence_check import PresenceCheckOperation
 
 mapping = {
     "jev_retrieve": JevRetrieveOperation,
+    "presence_check": PresenceCheckOperation,
     "cluster": ClusterOperation,
     "code_filter": CodeFilterOperation,
     "code_map": CodeMapOperation,

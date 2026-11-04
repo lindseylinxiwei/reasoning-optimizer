@@ -36,6 +36,7 @@ from .doc_chunking_topk import DocumentChunkingTopKDirective
 from .chunk_header_summary import ChunkHeaderSummaryDirective
 from .take_head_tail import TakeHeadTailDirective
 from .jev_retrieval import JevRetrievalDirective
+from .presence_gate import PresenceGateDirective
 from .clarify_instructions import ClarifyInstructionsDirective
 from .swap_with_code import SwapWithCodeDirective
 from .map_reduce_fusion import MapReduceFusionDirective
@@ -66,6 +67,7 @@ ALL_DIRECTIVES = [
     CascadeFilteringDirective(),
     ArbitraryRewriteDirective(),
     JevRetrievalDirective(),
+    PresenceGateDirective(),
 ]
 
 ALL_COST_DIRECTIVES = [
@@ -80,6 +82,7 @@ ALL_COST_DIRECTIVES = [
     CascadeFilteringDirective(),
     ArbitraryRewriteDirective(),
     JevRetrievalDirective(),
+    PresenceGateDirective(),
 ]
 
 DIRECTIVE_GROUPS = {
@@ -189,6 +192,7 @@ __all__ = [
     "ChunkHeaderSummaryDirective",
     "TakeHeadTailDirective",
     "JevRetrievalDirective",
+    "PresenceGateDirective",
     "ClarifyInstructionsDirective",
     "SwapWithCodeDirective",
     "MapReduceFusionDirective",

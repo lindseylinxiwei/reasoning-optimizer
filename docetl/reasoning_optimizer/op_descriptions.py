@@ -645,6 +645,44 @@ op_jev_retrieve = Operator(
 )
 
 
+op_presence_check = Operator(
+    name="PresenceCheck",
+    type_llm_or_not="LLM-powered (Jev classifier, no text generation)",
+    description="""Cheap yes/no decisions that gate an expensive operation. For every document and every check {key, question}, Jev scores (0-1) whether the text contains what the question describes. Long documents are cut into chunks of chunk_chars that fit one Jev request; a check is present if any chunk scores >= threshold, and a present check is not asked again in later chunks. Up to 32 questions share one request.
+
+    Output per document: <output_prefix><key> (bool) for each check, <any_key> (true if any check is present), and a diagnostics field with the maximum score per check. A later gated_map runs only where a gate field is true, and a prompt can include an instruction only when its check is present ({% if input.<field> %}...{% endif %}).
+
+    Cost: Jev charges input tokens only (about $0.042 per million), so one pass over a 40k-character document costs about $0.0005 per 32 checks. The threshold is a recall knob: a gate that says absent for something present loses it for good, so keep it low (0.2-0.4).""",
+    when_to_use="Use before an expensive LLM operation whose outputs are often absent (e.g. contract clauses a contract may not contain, events a report may not mention): it skips work for absent parts and stops the LLM from inventing answers for them. Not useful when almost every document contains every output, or when the presence question is as hard as the extraction itself.",
+    required_parameters="""
+    name: Unique name for the operation
+    type: Must be "presence_check"
+    text_key: Field containing the text to check
+    checks: List of {key, question}. key is an identifier; question asks whether the text contains the thing, e.g. "Does the text contain a clause restricting assignment of the contract without consent?"
+    """,
+    optional_parameters="""
+    context: Short task description shown to Jev with every chunk
+    threshold: Score at which a check counts as present (default 0.3)
+    chunk_chars: Characters per Jev request (default 16000, max 24000)
+    overlap_chars: Overlap between chunks (default 400)
+    output_prefix: Prefix of the boolean fields (default "<name>_")
+    any_key: Field that is true if any check is present (default "<name>_any")
+    """,
+    returns="The input documents with one boolean per check, the any field, and diagnostics _<name>_presence",
+    minimal_example_configuration="""
+    name: clause_presence
+    type: presence_check
+    text_key: contract_text
+    checks:
+      - key: anti_assignment
+        question: Does the text require consent or notice before the contract can be assigned to a third party?
+      - key: governing_law
+        question: Does the text state which state's or country's law governs the contract?
+    threshold: 0.3
+    """,
+)
+
+
 # List of all operators
 ALL_OPERATORS = [
     op_map,
@@ -661,6 +699,7 @@ ALL_OPERATORS = [
     op_code_filter,
     op_topk,
     op_jev_retrieve,
+    op_presence_check,
 ]
 
 

@@ -1325,3 +1325,70 @@ class JevIndexDesignSchema(BaseModel):
     leaf_chars: int = Field(2400, description="Regions longer than this are cut into leaves (300-20000)")
     min_chars: int = Field(200, description="Segments shorter than this are merged into a neighbor")
     fanout: int = Field(4, description="Maximum children per node before contiguous grouping (2-16)")
+
+
+class PresenceGateCheckSchema(BaseModel):
+    key: str = Field(..., description="Identifier for the check, e.g. anti_assignment")
+    question: str = Field(
+        ..., description="Yes/no question asking whether the text CONTAINS the thing (not what it says), "
+        "e.g. 'Does the text require consent before the contract can be assigned?'")
+    prompt_fragment: Optional[str] = Field(
+        None, description="granularity 'category' only: the exact, verbatim part of the target prompt that asks "
+        "for this output (e.g. one numbered item). It is shown to the LLM only when the check is present.")
+
+
+class PresenceGateInstantiateSchema(BaseModel):
+    """
+    Schema for the presence_gate directive: a cheap presence check before an expensive map, which then
+    runs only where (or only for the parts that) the check says present.
+    """
+
+    name: str = Field(..., description="Name of the presence-check operator")
+    document_key: str = Field(..., description="The text field the target map reads and the check should read")
+    granularity: str = Field(
+        "category", description="'document': one check gates the whole map; 'category': one check per output "
+        "category, and each category's prompt fragment is included only when its check is present")
+    checker: str = Field("jev", description="'jev' (Jev classifier, very cheap) or 'llm' (a cheap LLM map)")
+    checker_model: Optional[str] = Field(None, description="checker 'llm' only: model for the check")
+    context: str = Field("", description="One or two sentences describing the task, shown to the checker")
+    checks: List[PresenceGateCheckSchema] = Field(..., description="1 check for 'document'; 1-64 for 'category'")
+    threshold: float = Field(0.3, description="checker 'jev' only: score at which a check is present (0.05-0.9); "
+                             "lower = higher recall")
+    chunk_chars: int = Field(16000, description="checker 'jev' only: characters per Jev request (2000-24000)")
+    skip_when_none: bool = Field(True, description="Skip the map entirely for documents where no check is present")
+
+    @field_validator("granularity")
+    @classmethod
+    def check_granularity(cls, v):
+        if v not in ("document", "category"):
+            raise ValueError("granularity must be 'document' or 'category'")
+        return v
+
+    @field_validator("checker")
+    @classmethod
+    def check_checker(cls, v):
+        if v not in ("jev", "llm"):
+            raise ValueError("checker must be 'jev' or 'llm'")
+        return v
+
+    @model_validator(mode="after")
+    def check_consistency(self):
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", self.name):
+            raise ValueError("name must be an identifier")
+        keys = [c.key for c in self.checks]
+        if len(set(keys)) != len(keys) or not all(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k) for k in keys):
+            raise ValueError("check keys must be unique identifiers")
+        if self.granularity == "document" and len(self.checks) != 1:
+            raise ValueError("granularity 'document' takes exactly one check")
+        if self.granularity == "category":
+            if not 1 <= len(self.checks) <= 64:
+                raise ValueError("granularity 'category' takes 1-64 checks")
+            if any(not c.prompt_fragment for c in self.checks):
+                raise ValueError("granularity 'category' needs a prompt_fragment for every check")
+        if self.checker == "llm" and not self.checker_model:
+            raise ValueError("checker 'llm' needs checker_model")
+        if not 0.05 <= self.threshold <= 0.9:
+            raise ValueError("threshold must be in [0.05, 0.9]")
+        if not 2000 <= self.chunk_chars <= 24000:
+            raise ValueError("chunk_chars must be in [2000, 24000]")
+        return self
