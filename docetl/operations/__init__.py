@@ -20,10 +20,12 @@ from docetl.operations.topk import TopKOperation
 
 from docetl.operations.jev_retrieve import JevRetrieveOperation
 from docetl.operations.presence_check import PresenceCheckOperation
+from docetl.operations.gated_map import GatedMapOperation
 
 mapping = {
     "jev_retrieve": JevRetrieveOperation,
     "presence_check": PresenceCheckOperation,
+    "gated_map": GatedMapOperation,
     "cluster": ClusterOperation,
     "code_filter": CodeFilterOperation,
     "code_map": CodeMapOperation,
