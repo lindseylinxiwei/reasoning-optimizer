@@ -108,18 +108,20 @@ It follows the official CUAD matching, as frozen in the Jev retrieval experiment
 
 ### Reading the pipeline output
 
-The pipeline returns `clauses: list[{clause_type, text_span}]`.
+The pipeline returns `clauses: list[{clause_type, text_spans}]` (current `pipelines/cuad.yaml`) or the
+older `clauses: list[{clause_type, text_span}]`; both are read.
 
 - **Type:** `clause_type` is normalized: lowercased, a leading list number such as `24) ` or `1. `
   dropped, and non-alphanumerics joined with `_`. It must then equal a metric key, the CSV header
   or an explicit alias (e.g. `right_of_first_refusal_offer_or_negotiation`,
-  `non_solicit_of_employees`). A known name followed by more words also maps to that name, the
+  `non_solicit_of_employees`), also after making every word singular ("Third Party Beneficiaries"
+  maps to `third_party_beneficiary`; a name that would become ambiguous raises an error). A known name followed by more words also maps to that name, the
   longest that fits. This covers models that copy the whole prompt line, e.g. "Governing Law:
   Which state/country's law governs ...". There is no nearest-name guessing.
   - Types that still don't map are ignored and reported in `unknown_clause_types`, e.g.
     "Confidentiality".
   - Prefix matches are reported in `prefix_matched_clause_types`.
-- **Quotes:** `text_span` may be a string or a list of strings.
+- **Quotes:** `text_spans` (or `text_span`) may be a string or a list of strings.
   - Repeated entries of a type add more quotes.
   - Exactly empty strings are dropped, and exact duplicates are removed, keeping order.
   - Strings are not split on commas or repaired, and need not occur literally in the contract.

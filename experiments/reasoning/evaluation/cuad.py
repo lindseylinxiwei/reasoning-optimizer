@@ -348,17 +348,38 @@ for _key, _column, _aliases in CUAD_CATEGORIES:
 _TYPE_NAMES_BY_LENGTH = sorted(_TYPE_NAMES, key=len, reverse=True)
 
 
+def _singular(key):
+    """Each word in singular form ('beneficiaries' -> 'beneficiary', 'rights' -> 'right')."""
+    def one(word):
+        if len(word) > 4 and word.endswith("ies"):
+            return word[:-3] + "y"
+        if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+            return word[:-1]
+        return word
+    return "_".join(one(w) for w in key.split("_"))
+
+
+# The same names with every word singular, for plural/singular variants ("Third Party Beneficiaries").
+_TYPE_NAMES_SINGULAR = {}
+for _name, _key in _TYPE_NAMES.items():
+    if _TYPE_NAMES_SINGULAR.setdefault(_singular(_name), _key) != _key:
+        raise ValueError(f"Ambiguous singular clause type name: {_name}")
+
+
 def canonical_clause_type(clause_type):
     """Map a predicted clause_type to a metric key, or None.
 
-    Exact match on the normalized name, the CSV header or an alias. Otherwise, a known name
+    Exact match on the normalized name, the CSV header or an alias, also with every word made
+    singular ("Third Party Beneficiaries" -> third_party_beneficiary). Otherwise, a known name
     followed by more words ("Governing Law: Which state's law ...", the prompt line copied with its
     question) maps to that name, the longest one that fits. No nearest-name guessing.
-    Returns (key, how) with how in {"exact", "prefix"}.
+    Returns (key, how) with how in {"exact", "plural", "prefix"}.
     """
     key = _type_key(clause_type)
     if key in _TYPE_NAMES:
         return _TYPE_NAMES[key], "exact"
+    if _singular(key) in _TYPE_NAMES_SINGULAR:
+        return _TYPE_NAMES_SINGULAR[_singular(key)], "plural"
     for name in _TYPE_NAMES_BY_LENGTH:
         if key.startswith(name + "_"):
             return _TYPE_NAMES[name], "prefix"
@@ -459,8 +480,8 @@ def _resolve_categories(categories):
 def predictions_from_clauses(clauses, categories):
     """{metric key: [quotes]} from one output row's `clauses`, plus parsing diagnostics.
 
-    Each entry {clause_type, text_span} contributes its text_span (a string, or every string in a
-    list) to the category its clause_type maps to. Repeated entries of a type add more quotes.
+    Each entry {clause_type, text_span} or {clause_type, text_spans} contributes its spans (a string,
+    or every string in a list) to the category its clause_type maps to. Repeated entries of a type add more quotes.
     Exactly empty strings are dropped and exact duplicates removed, keeping order. Strings are not
     split on commas or otherwise repaired, and quotes need not occur in the source.
     """
@@ -480,7 +501,7 @@ def predictions_from_clauses(clauses, categories):
             info["prefix_types"].append(str(entry["clause_type"]))
         if key not in preds:
             continue  # a category outside the scored subset
-        span = entry.get("text_span")
+        span = entry["text_spans"] if "text_spans" in entry else entry.get("text_span")
         values = span if isinstance(span, list) else [span]
         for value in values:
             if value is None:
