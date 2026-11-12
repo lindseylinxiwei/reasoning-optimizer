@@ -66,7 +66,7 @@ op_map = Operator(
     minimal_example_configuration="""
     name: gen_insights
     type: map
-    model: gpt-4o-mini
+    model: gemini-3.5-flash-lite
     prompt: From the user log below, list 2-3 concise insights (1-2 words each) and 1-2 supporting actions per insight. Return as a list of dictionaries with 'insight' and 'supporting_actions'. Log: {{ input.log }}
     output:
         schema:
@@ -102,7 +102,7 @@ op_extract = Operator(
     - State conclusions drawn from the research
     Only extract the most important and substantive findings.
     document_keys: ["report_text"]
-    model: gpt-4o-mini
+    model: gemini-3.5-flash-lite
     """,
 )
 
@@ -132,7 +132,7 @@ op_parallel_map = Operator(
     prompts:
     - prompt: Extract skills from: {{ input.resume }}
         output_keys: [skills]
-        model: gpt-4o-mini
+        model: gemini-3.5-flash-lite
     - prompt: Calculate years of experience from: {{ input.resume }}
         output_keys: [years_exp]
     - prompt: Rate writing quality 1-10: {{ input.cover_letter }}
@@ -180,7 +180,7 @@ op_filter = Operator(
     output:
         schema:
             is_insightful: boolean
-        model: gpt-4o-mini
+        model: gemini-3.5-flash-lite
     """,
 )
 
@@ -227,7 +227,7 @@ op_reduce = Operator(
     name: summarize_feedback
     type: reduce
     reduce_key: department
-    model: gpt-4o-mini
+    model: gemini-3.5-flash-lite
     prompt: Summarize the customer feedback for {{ reduce_key.department }}:
     {% for item in inputs %}
     Feedback {{ loop.index }}: {{ item.feedback }}
@@ -472,8 +472,8 @@ op_resolve = Operator(
     minimal_example_configuration="""
     name: standardize_patient_names
     type: resolve
-    comparison_model: gpt-4o-mini
-    resolution_model: gpt-4o
+    comparison_model: gemini-3.5-flash-lite
+    resolution_model: gemini-3.1-pro-preview
     embedding_model: text-embedding-3-small
     comparison_prompt: |
     Compare the following two patient name entries:

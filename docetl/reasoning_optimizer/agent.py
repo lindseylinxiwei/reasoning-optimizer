@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel
 
 from docetl.reasoning_optimizer.directives import (
+    AVAILABLE_MODELS,
     get_all_directive_strings,
     instantiate_directive,
 )
@@ -115,7 +116,7 @@ def get_openai_response(
     input_query,
     input_schema,
     input_data_sample,
-    model="o3",
+    model="gemini/gemini-4-argon",
     max_tpm=5000000,
     message_history=[],
     curr_plan_output="",
@@ -133,7 +134,7 @@ def get_openai_response(
         Make sure that your cosen directive is in the provided list of rewrite directives.
         Pipeline:
         Pipelines in DocETL are the core structures that define the flow of data processing. A pipeline consists of five main components: \n
-        - Default Model: The language model to use for the pipeline. Limit your choice of model to gpt-5-nano, gpt-4o-mini, gpt-5 \n
+        - Default Model: The language model to use for the pipeline. Limit your choice of model to {", ".join("gemini/" + m for m in AVAILABLE_MODELS)} \n
         - System Prompts: A description of your dataset and the "persona" you'd like the LLM to adopt when analyzing your data. \n
         - Datasets: The input data sources for your pipeline. \n
         - Operators: The processing steps that transform your data. \n
@@ -204,10 +205,6 @@ def get_openai_response(
     response = litellm.completion(
         model=model,
         messages=messages,
-        api_key=os.environ.get("AZURE_API_KEY"),
-        api_base=os.environ.get("AZURE_API_BASE"),
-        api_version=os.environ.get("AZURE_API_VERSION"),
-        azure=True,
         response_format=ResponseFormat,
     )
     assistant_response = response.choices[0].message.content
@@ -271,13 +268,11 @@ def update_pipeline(orig_config, new_ops_list, target_ops):
 
 
 def fix_models(parsed_yaml):
-    """Fix model names based on model type (GPT -> Azure, Gemini -> Gemini provider)."""
+    """Give bare Gemini model names the LiteLLM "gemini/" provider prefix."""
     
     def get_model_type(model_name):
         """Determine model type from model name."""
-        if model_name.startswith("gpt"):
-            return "azure"
-        elif model_name.startswith("gemini"):
+        if model_name.startswith("gemini"):
             return "gemini"
         else:
             return "unknown"
@@ -288,9 +283,7 @@ def fix_models(parsed_yaml):
                 if key == "model" and isinstance(value, str):
                     model_type = get_model_type(value)
                     
-                    if model_type == "azure" and not value.startswith("azure"):
-                        obj[key] = f"azure/{value}"
-                    elif model_type == "gemini" and not value.startswith("gemini/"):
+                    if model_type == "gemini" and not value.startswith("gemini/"):
                         obj[key] = f"gemini/{value}"
                 else:
                     traverse(value)
@@ -467,7 +460,7 @@ def run_single_iteration(
             new_ops_list = update_sample(new_ops_list, target_ops, orig_operators)
             orig_config["operations"] = new_ops_list
 
-        # Ensure all model references start with 'azure/'
+        # Give bare Gemini model names the 'gemini/' prefix
         fix_models(orig_config)
 
     except ValueError as e:
@@ -479,14 +472,8 @@ def run_single_iteration(
         f"iteration_{iteration_num}.yaml",
     )
 
-    # Ensure every operator's model starts with 'azure/' or 'gemini/'
+    # Ensure every Gemini operator model has the 'gemini/' prefix
     for op in orig_config.get("operations", []):
-        if (
-            "model" in op
-            and "gpt" in str(op["model"])
-            and not str(op["model"]).startswith("azure/")
-        ):
-            op["model"] = "azure/" + str(op["model"])
         if (
             "model" in op
             and "gemini" in str(op["model"])

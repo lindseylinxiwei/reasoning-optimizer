@@ -64,7 +64,7 @@ def check_optimized_config_exists(original_path: str) -> Dict[str, Any]:
         return {"exists": False, "config": None, "path": str(original_path)}
 
 from experiments.reasoning.plot_result import (
-    find_pareto_frontier, calculate_hypervolume_comparison, 
+    find_pareto_frontier,
     plot_pareto_frontier_comparison, dataset_metrics
 )
 from docetl.mcts.mcts_utils import fix_models
@@ -97,13 +97,13 @@ CONFIG: Dict[str, Any] = {
         {
             "dataset": "sustainability",
             "build_first_layer": True,
-            "model": "gpt-4.1",
+            "model": "gemini/gemini-4-argon",
             # "original_config_path": "medec/gpt_4o_mini_config.yaml",
             # "baseline": {"iterations": 10},
             # "simple_baseline": {"iterations": 10},
             # "original_cost": 0.008168,
             "experiment_name": "sustainability_mcts_final",
-            "mcts": {"max_iterations": 30, "model": "gpt-4.1"}
+            "mcts": {"max_iterations": 30, "model": "gemini/gemini-4-argon"}
         }
     ]
 }
@@ -194,7 +194,7 @@ def _spawn_simple_baseline(
     return simple_baseline_mod.run_simple_baseline_remote.spawn(
         dataset=dataset,
         output_dir=output_dir,
-        model=model or "o3",  # Default to o3 model
+        model=model or "gemini/gemini-4-argon",
         experiment_name=experiment_name,
         ground_truth_path=ground_truth,
         original_query_result=original_query_result,
@@ -365,8 +365,8 @@ def try_fusion_directives(yaml_path: str, dataset: str, experiment_name: str,
                     new_operations, _ = fusion_directive.instantiate(
                         operators=operations,
                         target_ops=[op1['name'], op2['name']],
-                        agent_llm="gpt-4o-mini",  # Use a smaller model for fusion
-                        global_default_model=config.get('default_model', 'gpt-4o-mini')
+                        agent_llm="gemini/gemini-3.5-flash-lite",  # Use a smaller model for fusion
+                        global_default_model=config.get('default_model', 'gemini/gemini-3.5-flash-lite')
                     )
                     operations = new_operations
                     fusion_applied = True
@@ -691,9 +691,6 @@ def generate_plots_for_experiments_remote(dataset: str, experiments: List[str], 
                 "error": f"Need at least 2 experiments with data to generate comparison plots. Found {len(valid_experiments)} valid experiments."
             }
             
-        print(f"📐 Calculating hypervolumes for experiments: {valid_experiments}")
-        
-        # Calculate hypervolumes - pass files in order expected by the function
         baseline_file = evaluation_files.get('baseline', evaluation_files[valid_experiments[0]])
         mcts_file = evaluation_files.get('mcts', evaluation_files[valid_experiments[0]])  
         simple_file = evaluation_files.get('simple_baseline', evaluation_files[valid_experiments[0]])
@@ -701,20 +698,6 @@ def generate_plots_for_experiments_remote(dataset: str, experiments: List[str], 
         baseline_points = pareto_points.get('baseline', [])
         mcts_points = pareto_points.get('mcts', [])
         simple_points = pareto_points.get('simple_baseline', [])
-        
-        baseline_hv, mcts_hv, simple_hv, _, reference_point = calculate_hypervolume_comparison(
-            baseline_file, mcts_file, simple_file, None, dataset,
-            baseline_points, mcts_points, simple_points, None
-        )
-        
-        print(f"📊 Hypervolume Results:")
-        for exp in valid_experiments:
-            if exp == 'baseline':
-                print(f"   Baseline: {baseline_hv:.4f}")
-            elif exp == 'mcts':
-                print(f"   MCTS: {mcts_hv:.4f}")
-            elif exp == 'simple_baseline':
-                print(f"   Simple Baseline: {simple_hv:.4f}")
         
         # Save plots to the original output directory
         plot_output_dir = Path(base_output_dir) / f"{dataset}_original"
@@ -724,31 +707,21 @@ def generate_plots_for_experiments_remote(dataset: str, experiments: List[str], 
         plot_pareto_frontier_comparison(
             baseline_file, mcts_file, simple_file, None, dataset,
             baseline_points, mcts_points, simple_points, None,
-            output_path=str(plot_output_dir), reference_point=reference_point
+            output_path=str(plot_output_dir)
         )
         
         plot_path = str(plot_output_dir / f"pareto_frontier_comparison_{dataset}.png")
         print(f"📈 Comparison plot saved to: {plot_path}")
         
-        # Save hypervolume summary
-        hypervolume_summary_path = plot_output_dir / f"hypervolume_summary_{dataset}.txt"
-        with open(hypervolume_summary_path, 'w') as f:
-            f.write(f"Hypervolume Comparison Results - {dataset.upper()} Dataset\n")
+        # Save Pareto frontier summary
+        pareto_summary_path = plot_output_dir / f"pareto_summary_{dataset}.txt"
+        with open(pareto_summary_path, 'w') as f:
+            f.write(f"Pareto Frontier Comparison - {dataset.upper()} Dataset\n")
             f.write("=" * 60 + "\n\n")
             
             f.write(f"Dataset: {dataset}\n")
             f.write(f"Experiments: {', '.join(valid_experiments)}\n")
             f.write(f"Accuracy Metric: {dataset_metrics[dataset]}\n")
-            f.write(f"Reference Point: accuracy={reference_point['accuracy']:.4f}, cost=${reference_point['cost']:.6f}\n\n")
-            
-            f.write("HYPERVOLUME RESULTS:\n")
-            f.write("-" * 20 + "\n")
-            if 'baseline' in valid_experiments:
-                f.write(f"Baseline Hypervolume:       {baseline_hv:.6f}\n")
-            if 'mcts' in valid_experiments:
-                f.write(f"MCTS Hypervolume:           {mcts_hv:.6f}\n")
-            if 'simple_baseline' in valid_experiments:
-                f.write(f"Simple Baseline Hypervolume: {simple_hv:.6f}\n")
             f.write("\n")
             
             f.write("PARETO FRONTIER POINTS:\n")
@@ -762,7 +735,7 @@ def generate_plots_for_experiments_remote(dataset: str, experiments: List[str], 
             
             f.write(f"\nGenerated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
         
-        print(f"📄 Hypervolume summary saved to: {hypervolume_summary_path}")
+        print(f"📄 Pareto frontier summary saved to: {pareto_summary_path}")
         
         # Close any open plots to free memory
         plt.close('all')
@@ -773,13 +746,7 @@ def generate_plots_for_experiments_remote(dataset: str, experiments: List[str], 
         return {
             "success": True,
             "plot_path": plot_path,
-            "summary_path": str(hypervolume_summary_path),
-            "hypervolumes": {
-                exp: (baseline_hv if exp == 'baseline' else 
-                     mcts_hv if exp == 'mcts' else 
-                     simple_hv if exp == 'simple_baseline' else 0.0)
-                for exp in valid_experiments
-            },
+            "summary_path": str(pareto_summary_path),
             "experiments_processed": valid_experiments
         }
         
@@ -999,7 +966,7 @@ def run_from_config(config: Dict[str, Any]) -> int:
         simple_baseline_cfg: Optional[Dict[str, Any]] = exp.get("simple_baseline")
         if simple_baseline_cfg:
             sb_name: str = f"{dataset}_simple_baseline" if experiment_name is None else experiment_name
-            sb_model: Optional[str] = simple_baseline_cfg.get("model", "o3")
+            sb_model: Optional[str] = simple_baseline_cfg.get("model", "gemini/gemini-4-argon")
 
             call = _spawn_simple_baseline(
                 dataset=dataset,

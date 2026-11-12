@@ -38,21 +38,21 @@ class ArbitraryRewriteDirective(Directive):
             {
                 "name": "extract_names",
                 "type": "map",
-                "model": "gpt-4o",
+                "model": "gemini-3.1-pro-preview",
                 "prompt": "Extract all person names from: {{ input.text }}",
                 "output": {"schema": {"names": "list[string]"}}
             },
             {
                 "name": "extract_locations",
                 "type": "map",
-                "model": "gpt-4o",
+                "model": "gemini-3.1-pro-preview",
                 "prompt": "Extract all locations from: {{ input.text }}",
                 "output": {"schema": {"locations": "list[string]"}}
             },
             {
                 "name": "extract_dates",
                 "type": "map",
-                "model": "gpt-4o",
+                "model": "gemini-3.1-pro-preview",
                 "prompt": "Extract all dates from: {{ input.text }}",
                 "output": {"schema": {"dates": "list[string]"}}
             }
@@ -61,9 +61,9 @@ class ArbitraryRewriteDirective(Directive):
         Example SearchReplaceEdits (agent recognizes redundant LLM calls):
         search_replace_edits=[
             SearchReplaceEdit(
-                search='    {\\n        "name": "extract_names",\\n        "type": "map",\\n        "model": "gpt-4o",\\n        "prompt": "Extract all person names from: {{ input.text }}",\\n        "output": {"schema": {"names": "list[string]"}}\\n    },\\n    {\\n        "name": "extract_locations",\\n        "type": "map",\\n        "model": "gpt-4o",\\n        "prompt": "Extract all locations from: {{ input.text }}",\\n        "output": {"schema": {"locations": "list[string]"}}\\n    },\\n    {\\n        "name": "extract_dates",\\n        "type": "map",\\n        "model": "gpt-4o",\\n        "prompt": "Extract all dates from: {{ input.text }}",\\n        "output": {"schema": {"dates": "list[string]"}}\\n    }',
-                replace='    {\\n        "name": "extract_all_entities",\\n        "type": "map",\\n        "model": "gpt-4o-mini",\\n        "prompt": "Extract all entities from the text:\\\\n{{ input.text }}\\\\n\\\\nReturn names, locations, and dates.",\\n        "output": {\\n            "schema": {\\n                "names": "list[string]",\\n                "locations": "list[string]",\\n                "dates": "list[string]"\\n            }\\n        }\\n    }',
-                reasoning="Consolidate three separate GPT-4o calls into one GPT-4o-mini call"
+                search='    {\\n        "name": "extract_names",\\n        "type": "map",\\n        "model": "gemini-3.1-pro-preview",\\n        "prompt": "Extract all person names from: {{ input.text }}",\\n        "output": {"schema": {"names": "list[string]"}}\\n    },\\n    {\\n        "name": "extract_locations",\\n        "type": "map",\\n        "model": "gemini-3.1-pro-preview",\\n        "prompt": "Extract all locations from: {{ input.text }}",\\n        "output": {"schema": {"locations": "list[string]"}}\\n    },\\n    {\\n        "name": "extract_dates",\\n        "type": "map",\\n        "model": "gemini-3.1-pro-preview",\\n        "prompt": "Extract all dates from: {{ input.text }}",\\n        "output": {"schema": {"dates": "list[string]"}}\\n    }',
+                replace='    {\\n        "name": "extract_all_entities",\\n        "type": "map",\\n        "model": "gemini-3.5-flash-lite",\\n        "prompt": "Extract all entities from the text:\\\\n{{ input.text }}\\\\n\\\\nReturn names, locations, and dates.",\\n        "output": {\\n            "schema": {\\n                "names": "list[string]",\\n                "locations": "list[string]",\\n                "dates": "list[string]"\\n            }\\n        }\\n    }',
+                reasoning="Consolidate three separate gemini-3.1-pro-preview calls into one gemini-3.5-flash-lite call"
             )
         ]
 
@@ -73,14 +73,14 @@ class ArbitraryRewriteDirective(Directive):
             {
                 "name": "summarize_documents",
                 "type": "map",
-                "model": "gpt-4o",
+                "model": "gemini-3.1-pro-preview",
                 "prompt": "Summarize this document: {{ input.full_text }}",
                 "output": {"schema": {"summary": "string"}}
             },
             {
                 "name": "filter_relevant",
                 "type": "filter",
-                "model": "gpt-4o-mini",
+                "model": "gemini-3.5-flash-lite",
                 "prompt": "Is this document about technology? {{ input.full_text }}",
                 "output": {"schema": {"is_relevant": "boolean"}}
             }
@@ -89,13 +89,13 @@ class ArbitraryRewriteDirective(Directive):
         Example SearchReplaceEdits (agent recognizes inefficient ordering):
         search_replace_edits=[
             SearchReplaceEdit(
-                search='{\\n        "name": "summarize_documents",\\n        "type": "map",\\n        "model": "gpt-4o",\\n        "prompt": "Summarize this document: {{ input.full_text }}",\\n        "output": {"schema": {"summary": "string"}}\\n    },\\n    {\\n        "name": "filter_relevant",',
+                search='{\\n        "name": "summarize_documents",\\n        "type": "map",\\n        "model": "gemini-3.1-pro-preview",\\n        "prompt": "Summarize this document: {{ input.full_text }}",\\n        "output": {"schema": {"summary": "string"}}\\n    },\\n    {\\n        "name": "filter_relevant",',
                 replace='{\\n        "name": "filter_relevant",',
                 reasoning="Remove summarize operation from before filter"
             ),
             SearchReplaceEdit(
                 search='"output": {"schema": {"is_relevant": "boolean"}}\\n    }',
-                replace='"output": {"schema": {"is_relevant": "boolean"}}\\n    },\\n    {\\n        "name": "summarize_documents",\\n        "type": "map",\\n        "model": "gpt-4o",\\n        "prompt": "Summarize this technology document: {{ input.full_text }}",\\n        "output": {"schema": {"summary": "string"}}\\n    }',
+                replace='"output": {"schema": {"is_relevant": "boolean"}}\\n    },\\n    {\\n        "name": "summarize_documents",\\n        "type": "map",\\n        "model": "gemini-3.1-pro-preview",\\n        "prompt": "Summarize this technology document: {{ input.full_text }}",\\n        "output": {"schema": {"summary": "string"}}\\n    }',
                 reasoning="Add summarization after filter to only process relevant documents"
             )
         ]
@@ -113,14 +113,14 @@ class ArbitraryRewriteDirective(Directive):
                     {
                         "name": "extract_a",
                         "type": "map",
-                        "model": "gpt-4o",
+                        "model": "gemini-3.1-pro-preview",
                         "prompt": "Extract A from: {{ input.text }}",
                         "output": {"schema": {"a": "string"}},
                     },
                     {
                         "name": "extract_b",
                         "type": "map",
-                        "model": "gpt-4o",
+                        "model": "gemini-3.1-pro-preview",
                         "prompt": "Extract B from: {{ input.text }}",
                         "output": {"schema": {"b": "string"}},
                     },
@@ -325,7 +325,7 @@ class ArbitraryRewriteDirective(Directive):
         self,
         operators: List[Dict],
         target_ops: List[str] = None,
-        agent_llm: str = "gpt-4o-mini",
+        agent_llm: str = "gemini-3.5-flash-lite",
         message_history: list = [],
         **kwargs,
     ):

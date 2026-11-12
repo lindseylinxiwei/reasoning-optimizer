@@ -5,6 +5,9 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+GEMINI_EMBEDDING_MODEL = "gemini/gemini-embedding-001"
+ALLOWED_EMBEDDING_MODELS = {GEMINI_EMBEDDING_MODEL}
+
 
 def extract_for_variable(template_content):
     """
@@ -151,7 +154,7 @@ class GleaningInstantiateSchema(BaseModel):
     num_rounds: int = Field(
         ..., description="The maximum number of refinement iterations."
     )
-    model: str = Field(default="gpt-4o-mini", description="The LLM model to use.")
+    model: str = Field(default="gemini-3.5-flash-lite", description="The LLM model to use.")
 
     @field_validator("validation_prompt")
     @classmethod
@@ -188,7 +191,7 @@ class ChangeModelInstantiateSchema(BaseModel):
     Schema for changing model choice in a data processing pipeline.
     """
 
-    model: str = Field(default="gpt-4o-mini", description="The new LLM model to use.")
+    model: str = Field(default="gemini-3.5-flash-lite", description="The new LLM model to use.")
 
     @classmethod
     def validate_diff_model_in_list(
@@ -229,7 +232,7 @@ class DocSummarizationInstantiateSchema(BaseModel):
         description="Jinja prompt template for summarizing the document. Must reference {{ input.<document_key> }} and preserve information needed by downstream operators.",
     )
     model: str = Field(
-        default="gpt-4o-mini", description="The model to use for summarization."
+        default="gemini-3.5-flash-lite", description="The model to use for summarization."
     )
 
     @field_validator("prompt")
@@ -383,7 +386,7 @@ class DocCompressionInstantiateSchema(BaseModel):
         description="Plain text instructions for what to extract from the document. NOT a Jinja template - the Extract operator will automatically assemble the document content.",
     )
     model: str = Field(
-        default="gpt-4o-mini", description="The model to use for extraction."
+        default="gemini-3.5-flash-lite", description="The model to use for extraction."
     )
 
     def validate_document_keys_exists_in_input(self, input_file_path: str) -> None:
@@ -761,12 +764,17 @@ class TopKConfig(BaseModel):
         description="Keys to use for similarity matching, typically ['<split_key>_chunk']",
     )
     embedding_model: Optional[str] = Field(
-        "text-embedding-3-small",
-        description="Embedding model to use (only for embedding method)",
+        GEMINI_EMBEDDING_MODEL,
+        description=f"Embedding model to use (only for embedding method); always {GEMINI_EMBEDDING_MODEL}",
     )
     stratify_key: Optional[str] = Field(
         None, description="Optional key for stratified topk retrieval"
     )
+
+    @field_validator("embedding_model")
+    @classmethod
+    def _gemini_embeddings_only(cls, v):
+        return GEMINI_EMBEDDING_MODEL       # the search runs on Gemini only
 
     @field_validator("method")
     @classmethod
@@ -1117,7 +1125,7 @@ class CascadeFilteringInstantiateSchema(BaseModel):
 
     llm_pre_filters: List[LLMPreFilter] = Field(
         default_factory=list,
-        description="List of LLM-based pre-filters using gpt-5-nano (ordered by prompt length, shortest first)",
+        description="List of LLM-based pre-filters using gemini-3.1-flash-lite (ordered by prompt length, shortest first)",
     )
 
     analysis_summary: str = Field(

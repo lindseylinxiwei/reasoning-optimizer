@@ -268,7 +268,7 @@ def run_mcts_experiment(
     # Use original query result cost if available, otherwise use MCTS root cost
     root_cost = original_query_result["cost"] if original_query_result and original_query_result["success"] else mcts.root.cost
     
-    eval_results, pareto_auc = run_dataset_evaluation(
+    eval_results = run_dataset_evaluation(
         dataset=dataset,
         nodes_or_files=nodes_for_evaluation,
         output_path=output_path,
@@ -301,9 +301,6 @@ def run_mcts_experiment(
         "original_query_cost": original_query_result["cost"] if original_query_result and original_query_result["success"] else None,
         "original_query_success": original_query_result["success"] if original_query_result else None,
     }
-    # Add Pareto AUC if it was computed
-    if pareto_auc is not None:
-        results["pareto_auc"] = pareto_auc
     if eval_results:
         results["evaluation_file"] = str(output_path / "evaluation_metrics.json")
     # Save Pareto frontier if available

@@ -20,6 +20,9 @@ from pydantic import BaseModel, Field
 from litellm import completion
 from docetl.runner import DSLRunner
 from docetl.mcts.label_guard import sanitized_copy, strip_labels
+from docetl.reasoning_optimizer.directives import (
+    AVAILABLE_MODELS, DEFAULT_MODEL, DEFAULT_OPERATOR_MODEL,
+)
 from experiments.reasoning.evaluation.utils import run_dataset_evaluation, get_evaluate_func, dataset_accuracy_metrics
 import modal
 from experiments.reasoning.utils import app, volume, VOLUME_MOUNT_PATH, image
@@ -27,7 +30,6 @@ from experiments.reasoning.evaluation.utils import dataset_accuracy_metrics
 
 
 
-DEFAULT_MODEL = "o3"
 DEFAULT_OUTPUT_DIR = "outputs/simple_baseline"
 
 class AgentAction(BaseModel):
@@ -85,10 +87,8 @@ class PipelineExecutor:
         )
         output_json = self.experiment_dir / f"{prefix}_output.json"
         
-        # Add azure/ or gemini/ prefix to models
+        # Add the gemini/ prefix to bare Gemini model names
         for op in operators:
-            if "model" in op and "gpt" in str(op["model"]) and not str(op["model"]).startswith("azure/"):
-                op["model"] = "azure/" + str(op["model"])
             if "model" in op and "gemini" in str(op["model"]) and not str(op["model"]).startswith("gemini/"):
                 op["model"] = "gemini/" + str(op["model"])
 
@@ -98,7 +98,7 @@ class PipelineExecutor:
             "datasets": {
                 "input_data": {"type": "file", "path": dataset_file}
             },
-            "default_model": "azure/gpt-4o-mini",
+            "default_model": f"gemini/{DEFAULT_OPERATOR_MODEL}",
             "operations": operators,
             "pipeline": {
                 "steps": [{
@@ -301,10 +301,6 @@ class AgentCommunicator:
             response = completion(
                 model=self.model,
                 messages=messages,
-                azure=True,
-                api_key=os.environ.get("AZURE_API_KEY"),
-                api_base=os.environ.get("AZURE_API_BASE"),
-                api_version=os.environ.get("AZURE_API_VERSION"),
                 response_format={"type": "json_object"}
             )
             
@@ -325,10 +321,6 @@ class AgentCommunicator:
             response = completion(
                 model=self.model,
                 messages=messages + [{"role": "user", "content": request_msg}],
-                azure=True,
-                api_key=os.environ.get("AZURE_API_KEY"),
-                api_base=os.environ.get("AZURE_API_BASE"),
-                api_version=os.environ.get("AZURE_API_VERSION"),
                 response_format={"type": "json_object"}
             )
             
@@ -474,10 +466,8 @@ class SimpleBaselineAgent:
         3. **Operator Addition**: Add preprocessing, filtering, or post-processing operators
         4. **Jinja Templating**: Use flexible templating to read more/less context from documents
 
-        AVAILABLE MODELS (use with 'azure/' prefix):
-        - azure/gpt-4o-mini
-        - azure/gpt-5-nano
-        - azure/gpt-5
+        AVAILABLE MODELS (use with the 'gemini/' prefix):
+        {chr(10).join("        - gemini/" + m for m in AVAILABLE_MODELS).lstrip()}
 
         Your goal is to beat the baseline accuracy of {baseline_accuracy if baseline_accuracy is not None else 'N/A'}."""
 
@@ -836,14 +826,14 @@ def run_simple_baseline_experiment(dataset: str, output_dir: str = None, model: 
     # Final evaluation
     if all_iteration_results:
         print(f"📊 Running evaluation on {len(all_iteration_results)} iterations...")
-        eval_results, pareto_auc = run_dataset_evaluation(
+        eval_results = run_dataset_evaluation(
             dataset=dataset,
             nodes_or_files=all_iteration_results,
             output_path=exp_dir,
             ground_truth_path=ground_truth_path,
             method_name="simple_baseline"
         )
-        results.update({"evaluation": eval_results, "pareto_auc": pareto_auc})
+        results.update({"evaluation": eval_results})
     
     # Track experiment end time and calculate total latency
     agent.end_time = time.time()

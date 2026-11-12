@@ -1,4 +1,4 @@
-default_model: azure/gpt-4o-mini
+default_model: gemini/gemini-3.5-flash-lite
 bypass_cache: true
 datasets:
   contracts_data:

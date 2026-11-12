@@ -403,10 +403,9 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
         method_name (str): Method name for evaluation
         
     Returns:
-        tuple: (eval_results, pareto_auc) where eval_results is list of evaluation metrics
+        list: evaluation metrics, one dict per plan
     """
     eval_results = []
-    pareto_auc = None
     
     if dataset.lower() == "cuad":
         if ground_truth_path is None:
@@ -469,8 +468,8 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
                 print(f"   ⚠️  Evaluation failed for {jf}: {e}")
 
         if eval_results:
-            # Create plots and compute AUC
-            pareto_auc = _create_cuad_plots_and_auc(eval_results, output_path, root_cost)
+            # Create plots
+            _create_cuad_plots(eval_results, output_path, root_cost)
             
     elif dataset.lower() == "blackvault":
         print(f"\n🧪 Evaluating extraction JSONs for BlackVault dataset ...")
@@ -529,8 +528,8 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
                 print(f"   ⚠️  Evaluation failed for {jf}: {e}")
 
         if eval_results:
-            # Create plots and compute AUC
-            pareto_auc = _create_blackvault_plots_and_auc(eval_results, output_path, root_cost)
+            # Create plots
+            _create_blackvault_plots(eval_results, output_path, root_cost)
     
     elif dataset.lower() == "game_reviews":
         print(f"\n🧪 Evaluating game reviews analysis results ...")
@@ -590,8 +589,8 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
                 print(f"   ⚠️  Evaluation failed for {jf}: {e}")
 
         if eval_results:
-            # Create plots and compute AUC based on weighted score (50-50 Kendall's tau + sentiment)
-            pareto_auc = _create_game_reviews_plots_and_auc(eval_results, output_path, root_cost)
+            # Create plots
+            _create_game_reviews_plots(eval_results, output_path, root_cost)
     
     elif dataset.lower() == "medec":
         print(f"\n🧪 Evaluating medical error detection results ...")
@@ -654,8 +653,8 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
                 print(f"   ⚠️  Evaluation failed for {jf}: {e}")
 
         if eval_results:
-            # Create plots and compute AUC
-            pareto_auc = _create_medec_plots_and_auc(eval_results, output_path, root_cost)
+            # Create plots
+            _create_medec_plots(eval_results, output_path, root_cost)
     
     elif dataset.lower() == "sustainability":
         if ground_truth_path is None:
@@ -720,8 +719,8 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
                 print(f"   ⚠️  Evaluation failed for {jf}: {e}")
 
         if eval_results:
-            # Create plots and compute AUC
-            pareto_auc = _create_sustainability_plots_and_auc(eval_results, output_path, root_cost)
+            # Create plots
+            _create_sustainability_plots(eval_results, output_path, root_cost)
     
     elif dataset.lower() == "biodex":
         print(f"\n🧪 Evaluating BioDEX reaction extraction results ...")
@@ -781,8 +780,8 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
                 print(f"   ⚠️  Evaluation failed for {jf}: {e}")
 
         if eval_results:
-            # Create plots and compute AUC
-            pareto_auc = _create_biodex_plots_and_auc(eval_results, output_path, root_cost)
+            # Create plots
+            _create_biodex_plots(eval_results, output_path, root_cost)
     
     # Identify Pareto frontier for all datasets
     if eval_results:
@@ -802,11 +801,10 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
             json.dump(eval_results, f, indent=2)
         print(f"📊 Evaluation results written to {eval_out_file}")
     
-    return eval_results, pareto_auc
+    return eval_results
 
-def _create_cuad_plots_and_auc(eval_results, output_path, root_cost=None):
-    """Create plots and compute AUC for CUAD dataset"""
-    pareto_auc = None
+def _create_cuad_plots(eval_results, output_path, root_cost=None):
+    """Create plots for CUAD dataset"""
     
     # Plot F1 vs Cost scatter
     try:
@@ -834,61 +832,9 @@ def _create_cuad_plots_and_auc(eval_results, output_path, root_cost=None):
         print(f"📈 Scatter plot saved to: {plot_path}")
     except Exception as e:
         print(f"⚠️  Failed to create scatter plot: {e}")
-    
-    # Compute Hypervolume with reference point (accuracy=0, cost=baseline_cost*10)
-    try:
-        frontier_points = [row for row in eval_results if row.get("on_frontier", False)]
-        if frontier_points:
-            # Use highest cost across all points as reference
-            ref_cost = max(row["cost"] for row in eval_results)
-            print(f"Using highest cost across all points as reference: {ref_cost:.2f}")
-            ref_accuracy = 0.0
-            
-            # Sort frontier points by cost (ascending)
-            frontier_points.sort(key=lambda r: r["cost"])
-            
-            hypervolume = 0.0
-            
-            # Calculate trapezoid areas between consecutive frontier points
-            for i in range(len(frontier_points) - 1):
-                curr_point = frontier_points[i]
-                next_point = frontier_points[i + 1]
-                
-                if (curr_point["cost"] < ref_cost and curr_point["f1"] > ref_accuracy and
-                    next_point["cost"] < ref_cost and next_point["f1"] > ref_accuracy):
-                    
-                    # Trapezoid area: (height1 + height2) * width / 2
-                    width = next_point["cost"] - curr_point["cost"]
-                    height1 = curr_point["f1"] - ref_accuracy
-                    height2 = next_point["f1"] - ref_accuracy
-                    
-                    if width > 0 and height1 > 0 and height2 > 0:
-                        trapezoid_area = (height1 + height2) * width / 2
-                        hypervolume += trapezoid_area
-            
-            # Add final rectangle from last point to reference cost
-            if frontier_points:
-                last_point = frontier_points[-1]
-                if last_point["cost"] < ref_cost and last_point["f1"] > ref_accuracy:
-                    final_width = ref_cost - last_point["cost"]
-                    final_height = last_point["f1"] - ref_accuracy
-                    if final_width > 0 and final_height > 0:
-                        final_rectangle = final_width * final_height
-                        hypervolume += final_rectangle
-            
-            pareto_auc = hypervolume
-            print(f"📐 Hypervolume (ref_point=[{ref_accuracy}, {ref_cost:.2f}]): {hypervolume:.4f}")
-        else:
-            pareto_auc = 0.0
-    except Exception as e:
-        print(f"⚠️  Failed to compute Hypervolume: {e}")
-        pareto_auc = None
-    
-    return pareto_auc
 
-def _create_game_reviews_plots_and_auc(eval_results, output_path, root_cost=None):
-    """Create plots and compute AUC for game reviews dataset"""
-    pareto_auc = None
+def _create_game_reviews_plots(eval_results, output_path, root_cost=None):
+    """Create plots for game reviews dataset"""
     
     # Plot Combined Accuracy Score vs Cost scatter
     try:
@@ -916,63 +862,11 @@ def _create_game_reviews_plots_and_auc(eval_results, output_path, root_cost=None
         print(f"📈 Scatter plot saved to: {plot_path}")
     except Exception as e:
         print(f"⚠️  Failed to create scatter plot: {e}")
-    
-    # Compute Hypervolume with reference point (accuracy=0, cost=baseline_cost*10)
-    try:
-        frontier_points = [row for row in eval_results if row.get("on_frontier", False)]
-        if frontier_points:
-            # Use highest cost across all points as reference
-            ref_cost = max(row["cost"] for row in eval_results)
-            print(f"Using highest cost across all points as reference: {ref_cost:.2f}")
-            ref_accuracy = 0.0
-            
-            # Sort frontier points by cost (ascending)
-            frontier_points.sort(key=lambda r: r["cost"])
-            
-            hypervolume = 0.0
-            
-            # Calculate trapezoid areas between consecutive frontier points
-            for i in range(len(frontier_points) - 1):
-                curr_point = frontier_points[i]
-                next_point = frontier_points[i + 1]
-                
-                if (curr_point["cost"] < ref_cost and curr_point["combined_accuracy_score"] > ref_accuracy and
-                    next_point["cost"] < ref_cost and next_point["combined_accuracy_score"] > ref_accuracy):
-                    
-                    # Trapezoid area: (height1 + height2) * width / 2
-                    width = next_point["cost"] - curr_point["cost"]
-                    height1 = curr_point["combined_accuracy_score"] - ref_accuracy
-                    height2 = next_point["combined_accuracy_score"] - ref_accuracy
-                    
-                    if width > 0 and height1 > 0 and height2 > 0:
-                        trapezoid_area = (height1 + height2) * width / 2
-                        hypervolume += trapezoid_area
-            
-            # Add final rectangle from last point to reference cost
-            if frontier_points:
-                last_point = frontier_points[-1]
-                if last_point["cost"] < ref_cost and last_point["combined_accuracy_score"] > ref_accuracy:
-                    final_width = ref_cost - last_point["cost"]
-                    final_height = last_point["combined_accuracy_score"] - ref_accuracy
-                    if final_width > 0 and final_height > 0:
-                        final_rectangle = final_width * final_height
-                        hypervolume += final_rectangle
-            
-            pareto_auc = hypervolume
-            print(f"📐 Hypervolume (ref_point=[{ref_accuracy}, {ref_cost:.2f}]): {hypervolume:.4f}")
-        else:
-            pareto_auc = 0.0
-    except Exception as e:
-        print(f"⚠️  Failed to compute Hypervolume: {e}")
-        pareto_auc = None
-    
-    return pareto_auc
 
 
-def _create_blackvault_plots_and_auc(eval_results, output_path, root_cost=None):
+def _create_blackvault_plots(eval_results, output_path, root_cost=None):
 
-    """Create plots and compute AUC for BlackVault dataset"""
-    pareto_auc = None
+    """Create plots for BlackVault dataset"""
     
     # Plot Avg Distinct Locations vs Cost scatter
     try:
@@ -1000,63 +894,11 @@ def _create_blackvault_plots_and_auc(eval_results, output_path, root_cost=None):
         print(f"📈 Scatter plot saved to: {plot_path}")
     except Exception as e:
         print(f"⚠️  Failed to create scatter plot: {e}")
-    
-    # Compute Hypervolume with reference point (accuracy=0, cost=baseline_cost*10)
-    try:
-        frontier_points = [row for row in eval_results if row.get("on_frontier", False)]
-        if frontier_points:
-            # Use highest cost across all points as reference
-            ref_cost = max(row["cost"] for row in eval_results)
-            print(f"Using highest cost across all points as reference: {ref_cost:.2f}")
-            ref_accuracy = 0.0
-            
-            # Sort frontier points by cost (ascending)
-            frontier_points.sort(key=lambda r: r["cost"])
-            
-            hypervolume = 0.0
-            
-            # Calculate trapezoid areas between consecutive frontier points
-            for i in range(len(frontier_points) - 1):
-                curr_point = frontier_points[i]
-                next_point = frontier_points[i + 1]
-                
-                if (curr_point["cost"] < ref_cost and curr_point["avg_distinct_locations"] > ref_accuracy and
-                    next_point["cost"] < ref_cost and next_point["avg_distinct_locations"] > ref_accuracy):
-                    
-                    # Trapezoid area: (height1 + height2) * width / 2
-                    width = next_point["cost"] - curr_point["cost"]
-                    height1 = curr_point["avg_distinct_locations"] - ref_accuracy
-                    height2 = next_point["avg_distinct_locations"] - ref_accuracy
-                    
-                    if width > 0 and height1 > 0 and height2 > 0:
-                        trapezoid_area = (height1 + height2) * width / 2
-                        hypervolume += trapezoid_area
-            
-            # Add final rectangle from last point to reference cost
-            if frontier_points:
-                last_point = frontier_points[-1]
-                if last_point["cost"] < ref_cost and last_point["avg_distinct_locations"] > ref_accuracy:
-                    final_width = ref_cost - last_point["cost"]
-                    final_height = last_point["avg_distinct_locations"] - ref_accuracy
-                    if final_width > 0 and final_height > 0:
-                        final_rectangle = final_width * final_height
-                        hypervolume += final_rectangle
-            
-            pareto_auc = hypervolume
-            print(f"📐 Hypervolume (ref_point=[{ref_accuracy}, {ref_cost:.2f}]): {hypervolume:.4f}")
-        else:
-            pareto_auc = 0.0
-    except Exception as e:
-        print(f"⚠️  Failed to compute Hypervolume: {e}")
-        pareto_auc = None
-    
-    return pareto_auc
 
 
-def _create_medec_plots_and_auc(eval_results, output_path, root_cost=None):
+def _create_medec_plots(eval_results, output_path, root_cost=None):
 
-    """Create plots and compute AUC for MEDEC dataset"""
-    pareto_auc = None
+    """Create plots for MEDEC dataset"""
     
     # Plot Combined Score vs Cost scatter
     try:
@@ -1084,63 +926,10 @@ def _create_medec_plots_and_auc(eval_results, output_path, root_cost=None):
         print(f"📈 Scatter plot saved to: {plot_path}")
     except Exception as e:
         print(f"⚠️  Failed to create scatter plot: {e}")
-    
-    # Compute Hypervolume with reference point (accuracy=0, cost=baseline_cost*10)
-    try:
-        frontier_points = [row for row in eval_results if row.get("on_frontier", False)]
-        if frontier_points:
-            # Use highest cost across all points as reference
-            ref_cost = max(row["cost"] for row in eval_results)
-            print(f"Using highest cost across all points as reference: {ref_cost:.2f}")
-            ref_accuracy = 0.0
-            
-            # Sort frontier points by cost (ascending)
-            frontier_points.sort(key=lambda r: r["cost"])
-            
-            hypervolume = 0.0
-            
-            # Calculate trapezoid areas between consecutive frontier points
-            for i in range(len(frontier_points) - 1):
-                curr_point = frontier_points[i]
-                next_point = frontier_points[i + 1]
-                
-                if (curr_point["cost"] < ref_cost and curr_point["combined_score"] > ref_accuracy and
-                    next_point["cost"] < ref_cost and next_point["combined_score"] > ref_accuracy):
-                    
-                    # Trapezoid area: (height1 + height2) * width / 2
-                    width = next_point["cost"] - curr_point["cost"]
-                    height1 = curr_point["combined_score"] - ref_accuracy
-                    height2 = next_point["combined_score"] - ref_accuracy
-                    
-                    if width > 0 and height1 > 0 and height2 > 0:
-                        trapezoid_area = (height1 + height2) * width / 2
-                        hypervolume += trapezoid_area
-            
-            # Add final rectangle from last point to reference cost
-            if frontier_points:
-                last_point = frontier_points[-1]
-                if last_point["cost"] < ref_cost and last_point["combined_score"] > ref_accuracy:
-                    final_width = ref_cost - last_point["cost"]
-                    final_height = last_point["combined_score"] - ref_accuracy
-                    if final_width > 0 and final_height > 0:
-                        final_rectangle = final_width * final_height
-                        hypervolume += final_rectangle
-                        
-            
-            pareto_auc = hypervolume
-            print(f"📐 Hypervolume (ref_point=[{ref_accuracy}, {ref_cost:.2f}]): {hypervolume:.4f}")
-        else:
-            pareto_auc = 0.0
-    except Exception as e:
-        print(f"⚠️  Failed to compute Hypervolume: {e}")
-        pareto_auc = None
-    
-    return pareto_auc
 
 
-def _create_sustainability_plots_and_auc(eval_results, output_path, root_cost=None):
-    """Create plots and compute AUC for sustainability dataset"""
-    pareto_auc = None
+def _create_sustainability_plots(eval_results, output_path, root_cost=None):
+    """Create plots for sustainability dataset"""
     
     # Plot Economic Activity Accuracy vs Cost scatter
     try:
@@ -1168,61 +957,9 @@ def _create_sustainability_plots_and_auc(eval_results, output_path, root_cost=No
         print(f"📈 Scatter plot saved to: {plot_path}")
     except Exception as e:
         print(f"⚠️  Failed to create scatter plot: {e}")
-    
-    # Compute Hypervolume with reference point (accuracy=0, cost=baseline_cost*10)
-    try:
-        frontier_points = [row for row in eval_results if row.get("on_frontier", False)]
-        if frontier_points:
-            # Use highest cost across all points as reference
-            ref_cost = max(row["cost"] for row in eval_results)
-            print(f"Using highest cost across all points as reference: {ref_cost:.2f}")
-            ref_accuracy = 0.0
-            
-            # Sort frontier points by cost (ascending)
-            frontier_points.sort(key=lambda r: r["cost"])
-            
-            hypervolume = 0.0
-            
-            # Calculate trapezoid areas between consecutive frontier points
-            for i in range(len(frontier_points) - 1):
-                curr_point = frontier_points[i]
-                next_point = frontier_points[i + 1]
-                
-                if (curr_point["cost"] < ref_cost and curr_point["combined_score"] > ref_accuracy and
-                    next_point["cost"] < ref_cost and next_point["combined_score"] > ref_accuracy):
-                    
-                    # Trapezoid area: (height1 + height2) * width / 2
-                    width = next_point["cost"] - curr_point["cost"]
-                    height1 = curr_point["combined_score"] - ref_accuracy
-                    height2 = next_point["combined_score"] - ref_accuracy
-                    
-                    if width > 0 and height1 > 0 and height2 > 0:
-                        trapezoid_area = (height1 + height2) * width / 2
-                        hypervolume += trapezoid_area
-            
-            # Add final rectangle from last point to reference cost
-            if frontier_points:
-                last_point = frontier_points[-1]
-                if last_point["cost"] < ref_cost and last_point["combined_score"] > ref_accuracy:
-                    final_width = ref_cost - last_point["cost"]
-                    final_height = last_point["combined_score"] - ref_accuracy
-                    if final_width > 0 and final_height > 0:
-                        final_rectangle = final_width * final_height
-                        hypervolume += final_rectangle
-            
-            pareto_auc = hypervolume
-            print(f"📐 Hypervolume (ref_point=[{ref_accuracy}, {ref_cost:.2f}]): {hypervolume:.4f}")
-        else:
-            pareto_auc = 0.0
-    except Exception as e:
-        print(f"⚠️  Failed to compute Hypervolume: {e}")
-        pareto_auc = None
-    
-    return pareto_auc
 
-def _create_facility_plots_and_auc(eval_results, output_path, root_cost=None):
-    """Create plots and compute AUC for Facility dataset"""
-    pareto_auc = None
+def _create_facility_plots(eval_results, output_path, root_cost=None):
+    """Create plots for Facility dataset"""
     
     # Plot Combined Score vs Cost scatter
     try:
@@ -1250,66 +987,9 @@ def _create_facility_plots_and_auc(eval_results, output_path, root_cost=None):
         print(f"📈 Scatter plot saved to: {plot_path}")
     except Exception as e:
         print(f"⚠️  Failed to create scatter plot: {e}")
-    
-    # Compute Hypervolume with reference point (accuracy=0, cost=baseline_cost*10)
-    try:
-        frontier_points = [row for row in eval_results if row.get("on_frontier", False)]
-        if frontier_points:
-            # Use root cost if provided, otherwise fall back to minimum cost
-            if root_cost is not None:
-                ref_cost = root_cost * 10
-                print(f"Using root cost reference: {root_cost} -> ref_cost: {ref_cost}")
-            else:
-                baseline_cost = min(row["cost"] for row in eval_results)
-                ref_cost = baseline_cost * 10
-                print(f"Using baseline cost reference: {baseline_cost} -> ref_cost: {ref_cost}")
-            ref_accuracy = 0.0
-            
-            # Sort frontier points by cost (ascending)
-            frontier_points.sort(key=lambda r: r["cost"])
-            
-            hypervolume = 0.0
-            
-            # Calculate trapezoid areas between consecutive frontier points
-            for i in range(len(frontier_points) - 1):
-                curr_point = frontier_points[i]
-                next_point = frontier_points[i + 1]
-                
-                if (curr_point["cost"] < ref_cost and curr_point["combined_score"] > ref_accuracy and
-                    next_point["cost"] < ref_cost and next_point["combined_score"] > ref_accuracy):
-                    
-                    # Trapezoid area: (height1 + height2) * width / 2
-                    width = next_point["cost"] - curr_point["cost"]
-                    height1 = curr_point["combined_score"] - ref_accuracy
-                    height2 = next_point["combined_score"] - ref_accuracy
-                    
-                    if width > 0 and height1 > 0 and height2 > 0:
-                        trapezoid_area = (height1 + height2) * width / 2
-                        hypervolume += trapezoid_area
-            
-            # Add final rectangle from last point to reference cost
-            if frontier_points:
-                last_point = frontier_points[-1]
-                if last_point["cost"] < ref_cost and last_point["combined_score"] > ref_accuracy:
-                    final_width = ref_cost - last_point["cost"]
-                    final_height = last_point["combined_score"] - ref_accuracy
-                    if final_width > 0 and final_height > 0:
-                        final_rectangle = final_width * final_height
-                        hypervolume += final_rectangle
-            
-            pareto_auc = hypervolume
-            print(f"📐 Hypervolume (ref_point=[{ref_accuracy}, {ref_cost:.2f}]): {hypervolume:.4f}")
-        else:
-            pareto_auc = 0.0
-    except Exception as e:
-        print(f"⚠️  Failed to compute Hypervolume: {e}")
-        pareto_auc = None
-    
-    return pareto_auc
 
-def _create_biodex_plots_and_auc(eval_results, output_path, root_cost=None):
-    """Create plots and compute AUC for BioDEX dataset"""
-    pareto_auc = None
+def _create_biodex_plots(eval_results, output_path, root_cost=None):
+    """Create plots for BioDEX dataset"""
     
     # Plot RP@10 vs Cost scatter (since we're optimizing for RP@10)
     try:
@@ -1337,55 +1017,4 @@ def _create_biodex_plots_and_auc(eval_results, output_path, root_cost=None):
         print(f"📈 Scatter plot saved to: {plot_path}")
     except Exception as e:
         print(f"⚠️  Failed to create scatter plot: {e}")
-    
-    # Compute Hypervolume with reference point (accuracy=0, cost=baseline_cost*10)
-    try:
-        frontier_points = [row for row in eval_results if row.get("on_frontier", False)]
-        if frontier_points:
-            # Use highest cost across all points as reference
-            ref_cost = max(row["cost"] for row in eval_results)
-            print(f"Using highest cost across all points as reference: {ref_cost:.2f}")
-            ref_accuracy = 0.0
-            
-            # Sort frontier points by cost (ascending)
-            frontier_points.sort(key=lambda r: r["cost"])
-            
-            hypervolume = 0.0
-            
-            # Calculate trapezoid areas between consecutive frontier points
-            for i in range(len(frontier_points) - 1):
-                curr_point = frontier_points[i]
-                next_point = frontier_points[i + 1]
-                
-                if (curr_point["cost"] < ref_cost and curr_point["avg_rp_at_5"] > ref_accuracy and
-                    next_point["cost"] < ref_cost and next_point["avg_rp_at_5"] > ref_accuracy):
-                    
-                    # Trapezoid area: (height1 + height2) * width / 2
-                    width = next_point["cost"] - curr_point["cost"]
-                    height1 = curr_point["avg_rp_at_5"] - ref_accuracy
-                    height2 = next_point["avg_rp_at_5"] - ref_accuracy
-                    
-                    if width > 0 and height1 > 0 and height2 > 0:
-                        trapezoid_area = (height1 + height2) * width / 2
-                        hypervolume += trapezoid_area
-            
-            # Add final rectangle from last point to reference cost
-            if frontier_points:
-                last_point = frontier_points[-1]
-                if last_point["cost"] < ref_cost and last_point["avg_rp_at_5"] > ref_accuracy:
-                    final_width = ref_cost - last_point["cost"]
-                    final_height = last_point["avg_rp_at_5"] - ref_accuracy
-                    if final_width > 0 and final_height > 0:
-                        final_rectangle = final_width * final_height
-                        hypervolume += final_rectangle
-            
-            pareto_auc = hypervolume
-            print(f"📐 Hypervolume (ref_point=[{ref_accuracy}, {ref_cost:.2f}]): {hypervolume:.4f}")
-        else:
-            pareto_auc = 0.0
-    except Exception as e:
-        print(f"⚠️  Failed to compute Hypervolume: {e}")
-        pareto_auc = None
-    
-    return pareto_auc
 

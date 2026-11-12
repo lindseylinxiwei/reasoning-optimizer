@@ -71,7 +71,7 @@ class DocSummarizationDirective(Directive):
             "    name='extract_medical_essentials',\n"
             "    document_key='transcript',\n"
             "    prompt='Extract a summary of medical information from this consultation transcript for drug interaction analysis, side effect prediction, and monitoring plan creation. Include: all medications with dosages, patient complaints/symptoms, medical history, current conditions, patient demographics (age, weight), allergies, and any contraindications mentioned. Exclude scheduling, insurance, and casual conversation: {{ input.transcript }}',\n"
-            "    model='gpt-4o-mini'\n"
+            "    model='gemini-3.5-flash-lite'\n"
             "  )\n"
             "]\n"
             "\n"

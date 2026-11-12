@@ -54,12 +54,8 @@ def llm_judge_chaining(orig_config, new_config):
         reason: str
 
     response = litellm.completion(
-        model="gpt-4.1",
+        model="gemini/gemini-4-argon",
         messages=messages,
-        api_key=os.environ.get("AZURE_API_KEY"),
-        api_base=os.environ.get("AZURE_API_BASE"),
-        api_version=os.environ.get("AZURE_API_VERSION"),
-        azure=True,
         response_format=ResponseFormat
     )
 
@@ -71,7 +67,7 @@ orig_config = load_yaml(orig_yaml_path)
 orig_config = orig_config["operations"]
 
 # chaining = ChainingDirective()
-# new_ops_list, message_history = chaining.instantiate(operators = orig_config, target_ops = ["extract_contract_info"], agent_llm = "gpt-4.1")
+# new_ops_list, message_history = chaining.instantiate(operators = orig_config, target_ops = ["extract_contract_info"], agent_llm = "gemini/gemini-4-argon")
 
 
 # # Dump new_ops_list to a YAML file

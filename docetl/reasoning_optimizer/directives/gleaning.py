@@ -41,7 +41,7 @@ class GleaningDirective(Directive):
             {
               "validation_prompt": "There should be at least 2 insights, and each insight should have at least 1 supporting action.",
               "num_rounds": 2,
-              "model": "gpt-4o-mini"
+              "model": "gemini-3.5-flash-lite"
             }
         """,
     )

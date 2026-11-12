@@ -437,7 +437,7 @@ def run_baseline_experiment(
     # Use original query result cost if available, otherwise use baseline cost from first result
     root_cost = original_query_result["cost"] if (original_query_result and original_query_result["success"]) else (results[0].get("cost", 0.0) if results else 0.0)
     
-    eval_results, pareto_auc = run_dataset_evaluation(
+    eval_results = run_dataset_evaluation(
         dataset=dataset,
         nodes_or_files=files_for_evaluation,
         output_path=output_path,

@@ -165,18 +165,18 @@ def agent_completion(
     Unified completion function that routes to appropriate backend.
     
     For Kimi K2 / Together AI models: Uses litellm with together_ai/ prefix.
-    For azure/ models, or bare names (e.g. "gpt-4.1") when AZURE_API_KEY is set: Azure.
-    For bare names without Azure credentials: OpenAI (OPENAI_API_KEY, optional OPENAI_BASE_URL).
-    For other provider prefixes (e.g. "gemini/..."): LiteLLM routing with that provider's key.
+    Bare Gemini names (e.g. "gemini-4-argon") get the "gemini/" prefix.
+    Other bare names go to OpenAI (OPENAI_API_KEY, optional OPENAI_BASE_URL).
+    Provider-prefixed names (e.g. "gemini/...") use LiteLLM routing with that provider's key.
     
     Args:
         model: Model identifier.
                For Together AI: "together_ai/moonshotai/Kimi-K2-Thinking"
-               For Azure: "gpt-4.1", "gpt-4o", etc.
+               For Gemini: "gemini/gemini-4-argon" (or the bare "gemini-4-argon")
         messages: List of message dicts with role and content
         response_format: Optional Pydantic model for structured output
                         (injected into prompt for Kimi since it doesn't support native schema)
-        temperature: Temperature for sampling (default: None for Azure, 1.0 for Kimi)
+        temperature: Temperature for sampling (default: None, i.e. the provider's; 1.0 for Kimi)
         max_tokens: Maximum tokens in response
         **kwargs: Additional arguments passed to litellm
     
@@ -202,18 +202,12 @@ def agent_completion(
         return response, cost
     
     else:
+        if model.startswith("gemini-"):
+            model = f"gemini/{model}"
         litellm_kwargs = {"model": model, "messages": messages}
         provider_prefix = model.split("/", 1)[0] if "/" in model else None
-        if provider_prefix == "azure" or (provider_prefix is None and os.environ.get("AZURE_API_KEY")):
-            # Azure: explicit azure/ models, or bare names when Azure credentials are configured.
-            litellm_kwargs.update({
-                "api_key": os.environ.get("AZURE_API_KEY"),
-                "api_base": os.environ.get("AZURE_API_BASE"),
-                "api_version": os.environ.get("AZURE_API_VERSION"),
-                "azure": True,
-            })
-        elif provider_prefix is None:
-            # Bare names without Azure credentials go to OpenAI (or an OpenAI-compatible gateway).
+        if provider_prefix is None:
+            # Other bare names go to OpenAI (or an OpenAI-compatible gateway).
             litellm_kwargs["api_key"] = os.environ.get("OPENAI_API_KEY")
             if os.environ.get("OPENAI_BASE_URL"):
                 litellm_kwargs["api_base"] = os.environ["OPENAI_BASE_URL"]
@@ -396,7 +390,7 @@ class AgenticDirectiveRunner:
     def __init__(
         self,
         input_data: List[Dict],
-        agent_llm: str = "gpt-4.1-mini",
+        agent_llm: str = "gemini/gemini-4-argon",
         validation_func: Optional[callable] = None,
         enable_operator_docs: bool = False,
     ):

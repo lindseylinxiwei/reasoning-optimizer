@@ -61,7 +61,7 @@ class DocumentChunkingTopKDirective(Directive):
                 "k": 5,
                 "query": "competitor comparison versus alternative better than superior inferior worse features performance value recommendation prefer instead",
                 "keys": ["review_text_chunk"],
-                "embedding_model": "text-embedding-3-small"
+                "embedding_model": "gemini/gemini-embedding-001"
               }
             }
 
@@ -95,7 +95,7 @@ class DocumentChunkingTopKDirective(Directive):
                 "k": 8,
                 "query": "methodology methods study design sample size participants data collection statistical analysis validation procedure protocol experimental",
                 "keys": ["paper_content_chunk"],
-                "embedding_model": "text-embedding-3-small"
+                "embedding_model": "gemini/gemini-embedding-001"
               }
             }
 
@@ -401,7 +401,7 @@ class DocumentChunkingTopKDirective(Directive):
             f"     * For fts: use specific keywords that appear in relevant sections\n"
             f"     * Can use Jinja: '{{{{ input.competitor_name }}}} comparison versus {{{{ input.our_product }}}}'\n"
             f"   - keys: Always use the chunk key, typically ['<split_key>_chunk']\n"
-            f"   - embedding_model: (optional, only for embedding method) defaults to 'text-embedding-3-small'\n"
+            f"   - embedding_model: (optional, only for embedding method) defaults to 'gemini/gemini-embedding-001'\n"
             f"The topk query should be carefully crafted to find the most relevant chunks.\n"
             f"The reduce_prompt must process chunks directly and {'output a boolean decision' if op_type == 'filter' else 'preserve the original output schema'}.\n\n"
             f"Example:\n"

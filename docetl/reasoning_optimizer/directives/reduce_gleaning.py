@@ -63,7 +63,7 @@ class ReduceGleaningDirective(Directive):
             {
               "validation_prompt": "Verify that the synthesis includes all required sections (domain overview, major findings, methodological approaches, research gaps, future directions). Each major finding should be supported by evidence from multiple papers. Research gaps should be specific and actionable. The domain overview should accurately represent the scope covered by the input papers.",
               "num_rounds": 3,
-              "model": "gpt-4o-mini"
+              "model": "gemini-3.5-flash-lite"
             }
         """,
     )

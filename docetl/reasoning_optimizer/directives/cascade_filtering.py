@@ -18,10 +18,10 @@ class CascadeFilteringDirective(Directive):
         default="cascade_filtering", description="The name of the directive"
     )
     formal_description: str = Field(
-        default="Filter => (Code Filter* -> Filter(gpt-5-nano)* ->) Filter"
+        default="Filter => (Code Filter* -> Filter(gemini-3.1-flash-lite)* ->) Filter"
     )
     nl_description: str = Field(
-        default="Optimizes filtering costs by injecting a cascade of cheaper filters before the main filter. Starts with deterministic code filters (cheapest), then gpt-5-nano filters (ordered by prompt length), before the original expensive filter. Pre-filters prioritize high recall (rarely rejecting valid documents) and can have lower precision (okay to let through some invalid docs that the main filter will catch)."
+        default="Optimizes filtering costs by injecting a cascade of cheaper filters before the main filter. Starts with deterministic code filters (cheapest), then gemini-3.1-flash-lite filters (ordered by prompt length), before the original expensive filter. Pre-filters prioritize high recall (rarely rejecting valid documents) and can have lower precision (okay to let through some invalid docs that the main filter will catch)."
     )
     when_to_use: str = Field(
         default="When you have an expensive Filter operation (using costly models or complex prompts) and the data contains patterns that allow for cheaper pre-filtering. The pre-filters must have high recall (not dropping valid documents) but can have lower precision, as the final filter provides the actual precision."
@@ -37,7 +37,7 @@ class CascadeFilteringDirective(Directive):
         Target Operation:
         - name: filter_litigation_relevant_docs
           type: filter
-          model: gpt-4o
+          model: gemini-3.1-pro-preview
           prompt: |
             Determine if this document is relevant to our patent litigation case.
 
@@ -104,7 +104,7 @@ class CascadeFilteringDirective(Directive):
         Target Operation:
         - name: filter_misinformation
           type: filter
-          model: gpt-4o
+          model: gemini-3.1-pro-preview
           prompt: |
             Analyze this social media post to determine if it contains health misinformation.
 
@@ -178,12 +178,12 @@ class CascadeFilteringDirective(Directive):
                 input_config={
                     "name": "filter_quality",
                     "type": "filter",
-                    "model": "gpt-4o",
+                    "model": "gemini-3.1-pro-preview",
                     "prompt": "Is this a high-quality research paper? Paper: {{ input.paper }}",
                     "output": {"schema": {"is_quality": "boolean"}},
                 },
                 target_ops=["filter_quality"],
-                expected_behavior="Should inject cheaper pre-filters (code and/or gpt-5-nano) before the expensive gpt-4o filter",
+                expected_behavior="Should inject cheaper pre-filters (code and/or gemini-3.1-flash-lite) before the expensive gemini-3.1-pro-preview filter",
                 should_pass=True,
             )
         ]
@@ -236,7 +236,7 @@ The target filter '{op['name']}' fits into this broader pipeline. Consider what 
             f"1. Understand what documents should pass vs. fail the main filter\n"
             f"2. Identify simple patterns that can predict filter outcomes\n"
             f"3. Design code-based filters for deterministic patterns (cheapest)\n"
-            f"4. Design gpt-5-nano filters for simple semantic patterns (still cheap)\n\n"
+            f"4. Design gemini-3.1-flash-lite filters for simple semantic patterns (still cheap)\n\n"
             f"Guidelines for code_pre_filters:\n"
             f"- Must be Python functions with signature: def transform(input_doc): return bool\n"
             f"- Should use regex, keyword matching, length checks, or simple logic\n"
@@ -370,12 +370,12 @@ The target filter '{op['name']}' fits into this broader pipeline. Consider what 
                     rewrite.llm_pre_filters, key=lambda f: len(f.prompt)
                 )
 
-                # Then, add all LLM filters (using gpt-5-nano)
+                # Then, add all LLM filters (using gemini-3.1-flash-lite)
                 for i, llm_filter in enumerate(sorted_llm_filters):
                     llm_filter_op = {
                         "name": f"{llm_filter.name}_{op['name']}",
                         "type": "filter",
-                        "model": "gpt-5-nano",
+                        "model": "gemini-3.1-flash-lite",
                         "prompt": llm_filter.prompt,
                         "output": {"schema": {"keep": "boolean"}},
                     }

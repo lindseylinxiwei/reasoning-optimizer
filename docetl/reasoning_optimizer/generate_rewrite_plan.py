@@ -35,7 +35,7 @@ class MetadataNeeds(BaseModel):
 class Generate_rewrite_plan:
     """ """
 
-    def __init__(self, ai_response: Union[str, Dict[str, Any]], model="o3"):
+    def __init__(self, ai_response: Union[str, Dict[str, Any]], model="gemini/gemini-4-argon"):
         """
         Initialize with the AI response from optimize_plan.py.
         Parses the response to extract operations and saves the rest as records for history.
@@ -96,10 +96,6 @@ class Generate_rewrite_plan:
         response = litellm.completion(
             model=self.model,  # Use a default model instead of self.model
             messages=messages,
-            api_key=os.environ.get("AZURE_API_KEY"),
-            api_base=os.environ.get("AZURE_API_BASE"),
-            api_version=os.environ.get("AZURE_API_VERSION"),
-            azure=True,
             response_format=ChunkSize,
         )
         content = response.choices[0].message.content
@@ -192,10 +188,6 @@ class Generate_rewrite_plan:
         response = litellm.completion(
             model=self.model,
             messages=messages,
-            api_key=os.environ.get("AZURE_API_KEY"),
-            api_base=os.environ.get("AZURE_API_BASE"),
-            api_version=os.environ.get("AZURE_API_VERSION"),
-            azure=True,
             response_format=SplitConfig,
         )
         result = json.loads(response.choices[0].message.content)
@@ -322,10 +314,6 @@ class Generate_rewrite_plan:
         response = litellm.completion(
             model=self.model,  # Use a default model instead of self.model
             messages=messages,
-            api_key=os.environ.get("AZURE_API_KEY"),
-            api_base=os.environ.get("AZURE_API_BASE"),
-            api_version=os.environ.get("AZURE_API_VERSION"),
-            azure=True,
         )
         return response.choices[0].message.content
 

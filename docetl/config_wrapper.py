@@ -41,7 +41,7 @@ class ConfigWrapper(object):
         self.yaml_file_suffix = yaml_file_suffix or datetime.datetime.now().strftime(
             "%Y%m%d_%H%M%S"
         )
-        self.default_model = self.config.get("default_model", "gpt-4o-mini")
+        self.default_model = self.config.get("default_model", "gemini/gemini-3.5-flash-lite")
         if console:
             self.console = console
         else:

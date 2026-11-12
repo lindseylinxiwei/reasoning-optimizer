@@ -34,15 +34,13 @@ def get_full_model_name(model_name: str) -> str:
     Get the full model name with the appropriate prefix.
     
     Args:
-        model_name: Short model name (e.g., 'gpt-5-nano', 'gemini-2.5-flash')
+        model_name: Short model name (e.g., 'gemini-3.5-flash-lite')
         
     Returns:
-        Full model name with prefix (e.g., 'azure/gpt-5-nano', 'gemini/gemini-2.5-flash')
+        Full model name with prefix (e.g., 'gemini/gemini-3.5-flash-lite')
     """
     if model_name.startswith('gemini'):
         return f"gemini/{model_name}"
-    elif model_name.startswith('gpt'):
-        return f"azure/{model_name}"
     else:
         # Return as-is if unknown prefix
         return model_name
@@ -54,7 +52,7 @@ def change_model_in_config(config: Dict, model_name: str) -> Dict:
     
     Args:
         config: Pipeline configuration dictionary
-        model_name: The model name to set (e.g., 'gpt-5-nano')
+        model_name: The model name to set (e.g., 'gemini-3.5-flash-lite')
         
     Returns:
         Modified configuration dictionary
@@ -87,7 +85,7 @@ def run_frontier_model_test(dataset: str, model_name: str) -> Dict[str, Any]:
     
     Args:
         dataset: Dataset name (e.g., 'cuad')
-        model_name: Model name (e.g., 'gpt-5-nano')
+        model_name: Model name (e.g., 'gemini-3.5-flash-lite')
     
     Returns:
         Dictionary with test results

@@ -55,7 +55,7 @@ class DocCompressionDirective(Directive):
             name="extract_regulatory_content",
             document_key="legal_document",
             prompt="Extract the minimal content necessary spanning: sections defining new regulatory requirements, stakeholder obligations, compliance deadlines, implementation timelines, and enforcement mechanisms. Focus only on substantive regulatory changes and specific dates, not background or procedural text.",
-            model="gpt-4o-mini"
+            model="gemini-3.5-flash-lite"
         )
         """
     )
@@ -133,7 +133,7 @@ class DocCompressionDirective(Directive):
             f"- name: A descriptive name for the Extract operation\n"
             f"- document_key: Which document field contains the long content to compress\n"
             f"- prompt: Plain text instructions for what MINIMAL content to extract (NOT a Jinja template)\n"
-            f"- model: Which model to use for extraction (typically a cheaper model like gpt-4o-mini)\n\n"
+            f"- model: Which model to use for extraction (typically a cheaper model like gemini-3.5-flash-lite)\n\n"
             f"IMPORTANT: The extraction prompt should focus on extracting the minimal content necessary "
             f"for ALL target operations. Analyze each operation's prompt to identify the "
             f"specific information types needed across all operations, then design an extraction prompt "

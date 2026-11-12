@@ -2,18 +2,22 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from litellm import completion
 from pydantic import BaseModel, Field
 
 # Configuration constants
 MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS = 3
-DEFAULT_MODEL = "gpt-4.1"
+# Agent model: selects directives and instantiates rewrites during the search.
+DEFAULT_MODEL = "gemini/gemini-4-argon"
+# Default model for pipeline operators when a pipeline or rewrite does not name one.
+DEFAULT_OPERATOR_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_MAX_TPM = 5000000
-# Models the optimizer may switch operators to. Gemini 3.x only: this project has no OpenAI or
-# Azure access, and Gemini 2.5 is no longer available to new API users (checked 2026-11-02).
+# Models the optimizer may switch operators to: every text Gemini 3.x model plus Gemini 4 on the
+# project's API key. The project has no OpenAI or Azure access, and Gemini 2.5 is excluded on
+# purpose (checked 2026-11-08).
 AVAILABLE_MODELS = [
-    "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash",
-    "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-3.6-flash",
+    "gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview",
+    "gemini-4-argon",
 ]
 
 
@@ -94,7 +98,7 @@ class Directive(BaseModel, ABC):
     def instantiate(self, *args, **kwargs):
         pass
 
-    def run_tests(self, agent_llm: str = "gpt-4o-mini") -> List[TestResult]:
+    def run_tests(self, agent_llm: str = DEFAULT_MODEL) -> List[TestResult]:
         """Run all test cases for this directive using LLM judge"""
         import json
         import os
@@ -233,11 +237,12 @@ class Directive(BaseModel, ABC):
             passed: bool
             reason: str
 
-        response = completion(
+        from .agent_utils import agent_completion
+
+        response, _ = agent_completion(
             model=agent_llm,
             messages=messages,
             response_format=JudgeResponse,
-            azure=True,
         )
 
         # Parse the JSON response

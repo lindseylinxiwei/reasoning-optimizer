@@ -145,13 +145,11 @@ def update_pipeline(orig_config, new_ops_list, target_ops):
 
 
 def fix_models(parsed_yaml):
-    """Fix model names based on model type (GPT -> Azure, Gemini -> Gemini provider)."""
+    """Give bare Gemini model names the LiteLLM "gemini/" provider prefix."""
     
     def get_model_type(model_name):
         """Determine model type from model name."""
-        if model_name.startswith("gpt"):
-            return "azure"
-        elif model_name.startswith("gemini"):
+        if model_name.startswith("gemini"):
             return "gemini"
         else:
             return "unknown"
@@ -162,9 +160,7 @@ def fix_models(parsed_yaml):
                 if (key == "model" or key == "default_model") and isinstance(value, str):
                     model_type = get_model_type(value)
                     
-                    if model_type == "azure" and not value.startswith("azure"):
-                        obj[key] = f"azure/{value}"
-                    elif model_type == "gemini" and not value.startswith("gemini/"):
+                    if model_type == "gemini" and not value.startswith("gemini/"):
                         obj[key] = f"gemini/{value}"
                 else:
                     traverse(value)

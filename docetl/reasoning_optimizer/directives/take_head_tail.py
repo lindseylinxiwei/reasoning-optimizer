@@ -39,7 +39,7 @@ class TakeHeadTailDirective(Directive):
             schema:
               domain: "string"
               confidence: "float"
-          model: gpt-4o-mini
+          model: gemini-3.5-flash-lite
 
         TakeHeadTailInstantiateSchema:
         {
@@ -70,7 +70,7 @@ class TakeHeadTailDirective(Directive):
             schema:
               domain: "string"
               confidence: "float"
-          model: gpt-4o-mini
+          model: gemini-3.5-flash-lite
         """
     )
 
@@ -84,7 +84,7 @@ class TakeHeadTailDirective(Directive):
                     "type": "map",
                     "prompt": "What research domain does this paper belong to (CS, Biology, Physics, etc.)? Base your classification on the content: {{ input.full_text }}",
                     "output": {"schema": {"domain": "string", "confidence": "float"}},
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["classify_paper_domain"],
                 expected_behavior="Should truncate full_text to first ~150 words (abstract/intro) since paper classification only needs the beginning, not the full methodology/results sections",
@@ -105,7 +105,7 @@ class TakeHeadTailDirective(Directive):
                             "doc_type": "string",
                         }
                     },
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["extract_document_metadata"],
                 expected_behavior="Should keep both head (~100 words for headers/title) and tail (~50 words for footers/signatures) since metadata appears at document beginning and end",
@@ -119,7 +119,7 @@ class TakeHeadTailDirective(Directive):
                     "type": "map",
                     "prompt": "Classify this email as HIGH, MEDIUM, or LOW priority based on urgency indicators: {{ input.email_body }}",
                     "output": {"schema": {"priority": "string", "reasoning": "string"}},
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["classify_email_priority"],
                 expected_behavior="Should truncate email_body to first ~75 words since email priority is determined by subject line and opening, not full conversation thread",
@@ -138,7 +138,7 @@ class TakeHeadTailDirective(Directive):
                             "parties_involved": "list[string]",
                         }
                     },
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["identify_legal_doc_type"],
                 expected_behavior="Should keep head (~200 words for title/parties) and tail (~100 words for signature blocks) since legal doc type is indicated at beginning and parties sign at end",
@@ -152,7 +152,7 @@ class TakeHeadTailDirective(Directive):
                     "type": "filter",
                     "prompt": "Is this email spam? Look for suspicious patterns in: {{ input.email_content }}",
                     "output": {"schema": {"_bool": "bool"}},
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["filter_spam_emails"],
                 expected_behavior="Should truncate email_content to first ~100 words since spam detection relies on subject, sender, and opening content, not full email thread",
@@ -168,7 +168,7 @@ class TakeHeadTailDirective(Directive):
                     "output": {
                         "schema": {"synthesis": "string", "key_themes": "list[string]"}
                     },
-                    "model": "gpt-4o-mini",
+                    "model": "gemini-3.5-flash-lite",
                 },
                 target_ops=["synthesize_research_findings"],
                 expected_behavior="Should keep head (~200 words for abstracts) and tail (~150 words for conclusions) from each paper since synthesis needs both research goals and outcomes",
