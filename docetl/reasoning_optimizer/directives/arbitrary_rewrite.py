@@ -9,7 +9,7 @@ from docetl.reasoning_optimizer.instantiate_schemas import (
 from docetl.reasoning_optimizer.op_descriptions import get_all_operator_descriptions
 
 from .agent_utils import AgenticDirectiveRunner
-from .base import Directive, DirectiveTestCase
+from .base import AVAILABLE_MODELS, Directive, DirectiveTestCase
 
 
 class ArbitraryRewriteDirective(Directive):
@@ -66,6 +66,7 @@ class ArbitraryRewriteDirective(Directive):
                 reasoning="Consolidate three separate gemini-3.1-pro-preview calls into one gemini-3.5-flash-lite call"
             )
         ]
+        decomposition="None: the three extractions read the same text and need the same context, so they are fused into one call."
 
         # Example 2: Reordering for Efficiency
         Original Pipeline JSON:
@@ -99,6 +100,7 @@ class ArbitraryRewriteDirective(Directive):
                 reasoning="Add summarization after filter to only process relevant documents"
             )
         ]
+        decomposition="Task decomposition: the cheap relevance check runs first, so the expensive summary only reads documents that pass."
 
         Note: The agent must provide exact string matches including whitespace for the search strings.
         """
@@ -187,6 +189,10 @@ class ArbitraryRewriteDirective(Directive):
             f"Current Pipeline Operations (as JSON array):\n"
             f"{pipeline_json}\n\n"
             f"Your task is to analyze this pipeline and propose search/replace edits to optimize it.\n\n"
+            f"Models: an LLM operation may only use one of these models (any other model is rejected): "
+            f"{', '.join(AVAILABLE_MODELS)}. A filter or map whose outputs are all boolean or enum may also use "
+            f"model 'jev' (a classifier: no text generation, at most 32K tokens of input per call). Embeddings "
+            f"(embedding_model) must use gemini/gemini-embedding-001.\n\n"
             f"IMPORTANT: The above JSON is ONLY the operations array. When creating search/replace edits, "
             f"work with this exact JSON structure. Do not include pipeline wrapper or other fields.\n\n"
             f"You have access to:\n"
@@ -217,6 +223,17 @@ class ArbitraryRewriteDirective(Directive):
             f"- Opportunities to use cheaper models\n"
             f"- Complex operations that could be broken into simpler steps\n"
             f"- Independent operations that could be parallelized\n\n"
+            f"Before proposing edits, consider two kinds of decomposition:\n"
+            f"1. Task decomposition: split the work by what each part needs. Different output fields, or "
+            f"different steps of one decision, may need different context, a different model or a cheaper "
+            f"operator. A fused per-document step can also let a later reduce aggregate short fields "
+            f"instead of re-reading whole documents.\n"
+            f"2. Data decomposition: decide which part of each document each sub-task needs (the opening "
+            f"pages, a specific section, retrieved passages, or the full text), and give each operation "
+            f"only that part. Use the sample documents to judge where the needed content sits and how "
+            f"long the documents are.\n"
+            f"You may use either, both, or neither. In the `decomposition` field, write one sentence "
+            f"saying which decomposition you chose and why.\n\n"
             f"Examples:\n"
             f"{self.example}\n\n"
             f"Analyze the pipeline and sample data strategically. When you have identified optimizations, "

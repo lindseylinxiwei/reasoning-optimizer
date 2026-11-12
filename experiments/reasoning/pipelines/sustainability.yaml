@@ -1,0 +1,98 @@
+default_model: gemini/gemini-3.5-flash-lite
+bypass_cache: true
+datasets:
+  company_reports:
+    type: file
+    path: "experiments/reasoning/data/train/sustainability.json"
+
+operations:
+  - name: filter_sustainability_reports
+    type: filter
+    litellm_completion_kwargs:
+      temperature: 0.0
+    output:
+      schema:
+        is_sustainability_report: boolean
+    prompt: |
+      Analyze the following document and determine if it is a sustainability report or contains significant sustainability-related content.
+      
+      Document text:
+      {{ input.tot_text_raw }}
+      
+      A sustainability report typically includes information about:
+      - Environmental performance and initiatives
+      - Social responsibility and community impact
+      - Corporate governance and sustainability practices
+      - ESG (Environmental, Social, Governance) metrics
+      - Climate change initiatives
+      - Sustainable business practices
+      - Corporate social responsibility activities
+      
+      Return true if this document is primarily a sustainability report or contains substantial sustainability-related content, false otherwise.
+
+  - name: determine_economic_activity
+    type: map
+    litellm_completion_kwargs:
+      temperature: 0.0
+    output:
+      schema:
+        economic_activity: enum[manufacturing, other, information_communication, finance_insurance, agriculture, energy_supply, health_social, trade_repair, real_estate, professional_scientific, transportation, construction, accommodation_food]
+    prompt: |
+      Analyze the following sustainability-related document and determine the primary economic sector/activity of the company.
+
+      Document text:
+      {{ input.tot_text_raw }}
+
+      Determine the primary economic sector/activity of the company. Choose from these exact categories:
+      - manufacturing
+      - other  
+      - information_communication
+      - finance_insurance
+      - agriculture
+      - energy_supply
+      - health_social
+      - trade_repair
+      - real_estate
+      - professional_scientific
+      - transportation
+      - construction
+      - accommodation_food
+
+      Return only the economic activity category.
+
+  - name: sustainability_summary
+    type: reduce
+    litellm_completion_kwargs:
+      temperature: 0.0
+    reduce_key: economic_activity
+    output:
+      schema:
+        economic_activity_summary: "list[{company_name: string, key_findings: string}]"
+    prompt: |
+      You are analyzing sustainability reports from companies in the {{ reduce_key }} sector.
+      
+      Here are the documents from this sector:
+      {% for item in inputs %}
+      Document {{ loop.index }}:
+      Document text: {{ item.tot_text_raw }}
+      ---
+      {% endfor %}
+
+      Create a comprehensive summary for the {{ reduce_key }} sector. Extract the company name from each document and provide key sustainability findings for each company.
+
+      For each company, provide:
+      - Company name (extracted from the document)
+      - Key findings: A concise summary of their key sustainability initiatives, achievements, or commitments (2-3 sentences max)
+
+pipeline:
+  steps:
+    - name: sustainability_analysis
+      input: company_reports
+      operations:
+        - filter_sustainability_reports
+        - determine_economic_activity
+        - sustainability_summary
+
+  output:
+    type: file
+    path: "experiments/reasoning/outputs/sustainability_baseline.json"

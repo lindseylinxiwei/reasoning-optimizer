@@ -8,6 +8,53 @@ from .medec import evaluate_results as medec_evaluate
 from .sustainability import evaluate_results as sustainability_evaluate
 from .biodex import evaluate_results as biodex_evaluate
 from .facility import evaluate_results as facility_evaluate
+from experiments.reasoning.label_isolation import label_free_container
+
+
+def _remote_evaluate_func(dataset, mode):
+    """Inside the label-free search container: score on the full image (remote_eval)."""
+    def remote_eval_func(method_name, results_file_path):
+        from experiments.reasoning.remote_eval import evaluate_remote
+
+        path = Path(results_file_path)
+        return evaluate_remote.remote(dataset, mode, method_name, path.name, path.read_bytes())
+    return remote_eval_func
+
+
+def _run_dataset_evaluation_via_remote(dataset, nodes_or_files, output_path, ground_truth_path, method_name, root_cost):
+    """Inside the label-free search container: run_dataset_evaluation on the full image, then
+    write the files it produced (metrics JSON, plots) into output_path here."""
+    from experiments.reasoning.remote_eval import run_dataset_evaluation_remote
+
+    output_path = Path(output_path)
+    items = []
+    for i, item in enumerate(nodes_or_files):
+        if hasattr(item, "result_path"):
+            jf = item.result_path
+            info = {"node_id": item.get_id(), "cost": item.cost, "visits": getattr(item, "visits", 0),
+                    "value": getattr(item, "value", 0), "mcts_accuracy": getattr(item, "mcts_accuracy", None),
+                    "on_frontier": getattr(item, "on_frontier", False)}
+            is_node = True
+        else:
+            jf = item["file_path"]
+            info = {k: v for k, v in item.items() if k != "file_path"}
+            is_node = False
+        if jf is None or not Path(jf).exists():
+            continue
+        jp = Path(jf).resolve()
+        try:
+            rel = str(jp.relative_to(output_path.resolve()))
+        except ValueError:
+            rel = f"_inputs/{i}_{jp.name}"
+        items.append({"rel_path": rel, "content": jp.read_bytes(), "info": info, "is_node": is_node})
+    eval_results, written = run_dataset_evaluation_remote.remote(
+        dataset, items, ground_truth_path, method_name, root_cost
+    )
+    for rel, content in written.items():
+        dest = output_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+    return eval_results
 
 dataset_accuracy_metrics = {
     "cuad": "avg_f1",
@@ -223,6 +270,8 @@ def get_evaluate_func(dataset, mode="train"):
     Returns:
         callable: Evaluation function that takes (method_name, results_file_path)
     """
+    if label_free_container():
+        return _remote_evaluate_func(dataset, mode)
     if dataset.lower() == "cuad":
         def cuad_eval_func(method_name, results_file_path):
             ground_truth_path = "experiments/reasoning/data/CUAD-master_clauses.csv"
@@ -405,6 +454,10 @@ def run_dataset_evaluation(dataset, nodes_or_files, output_path, ground_truth_pa
     Returns:
         list: evaluation metrics, one dict per plan
     """
+    if label_free_container():
+        return _run_dataset_evaluation_via_remote(
+            dataset, nodes_or_files, output_path, ground_truth_path, method_name, root_cost
+        )
     eval_results = []
     
     if dataset.lower() == "cuad":

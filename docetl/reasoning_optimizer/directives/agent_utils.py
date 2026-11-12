@@ -1,3 +1,4 @@
+import litellm
 import json
 import os
 import re
@@ -153,7 +154,7 @@ def _together_completion(
     return response, cost
 
 
-def agent_completion(
+def _agent_completion(
     model: str,
     messages: List[Dict],
     response_format: Optional[Type[BaseModel]] = None,
@@ -218,12 +219,18 @@ def agent_completion(
         
         if temperature is not None:
             litellm_kwargs["temperature"] = temperature
-            
+        if max_tokens:
+            litellm_kwargs["max_tokens"] = max_tokens
+
         # Add any additional kwargs
         litellm_kwargs.update(kwargs)
         
         response = litellm_completion(**litellm_kwargs)
-        cost = response._hidden_params.get("response_cost", 0.0)
+        cost = response._hidden_params.get("response_cost")
+        if cost is None:
+            # An unpriced model would make the budget undercount; price it from usage instead.
+            usage = getattr(response, "usage", None)
+            cost = litellm.completion_cost(completion_response=response) if usage else 0.0
         
         return response, cost
 
@@ -712,3 +719,33 @@ Provide your response as a JSON object matching this schema: {response_schema.mo
        
 
    
+
+# ---- spend tracking ------------------------------------------------------------------------
+# Directives return their agent cost only when instantiation succeeds; a call that fails after
+# several validation retries would otherwise never reach the budget. track_agent_cost() counts
+# every agent_completion made by this thread inside the block.
+import threading as _threading
+
+_spend = _threading.local()
+
+
+class track_agent_cost:
+    def __enter__(self):
+        self._prev = getattr(_spend, "tracker", None)
+        self.total = 0.0
+        _spend.tracker = self
+        return self
+
+    def __exit__(self, *exc):
+        _spend.tracker = self._prev
+        if self._prev is not None:
+            self._prev.total += self.total
+        return False
+
+
+def agent_completion(*args, **kwargs):
+    response, cost = _agent_completion(*args, **kwargs)
+    tracker = getattr(_spend, "tracker", None)
+    if tracker is not None:
+        tracker.total += float(cost or 0.0)
+    return response, cost

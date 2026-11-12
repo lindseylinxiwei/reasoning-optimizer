@@ -10,17 +10,17 @@ from .agent_utils import agent_completion, is_together_model, _extract_json_from
 
 MODEL_STATS = {
     "cuad": {
-        "gpt-5": {"acc": 0.7200038754634324, "cost": 2.282243},
-        "gpt-5-mini": {"acc": 0.6835748934962984, "cost": 0.605154},
-        "gpt-5-nano": {"acc": 0.6463552293414165, "cost": 0.231796},
-        "gpt-4.1": {"acc": 0.7366652765882619, "cost": 2.026396},
-        "gpt-4.1-mini": {"acc": 0.6914865483894942, "cost": 0.380290},
-        "gpt-4.1-nano": {"acc": 0.36382364868308986, "cost": 0.080214},
-        "gpt-4o": {"acc": 0.6214280458632053, "cost": 2.210165},
-        "gpt-4o-mini": {"acc": 0.4311917773936343, "cost": 0.137882},
-        "gemini-2.5-pro": {"acc": 0.7174635945681389, "cost": 2.820552},
-        "gemini-2.5-flash": {"acc": 0.7170929338182611, "cost": 1.032156},
-        "gemini-2.5-flash-lite": {"acc": 0.6087973440184378, "cost": 0.097669},
+        # Gemini sweep on the original pipeline, train split (40 contracts), 2026-11-10;
+        # acc = avg_f1 of the official-match CUAD evaluator (the search reward); cost in USD.
+        "gemini-3.1-flash-lite": {"acc": 0.5480314960629922, "cost": 0.196732},
+        "gemini-3.5-flash-lite": {"acc": 0.5594622543950362, "cost": 0.281492},
+        "gemini-3.7-flash": {"acc": 0.5969230769230769, "cost": 1.065943},
+        "gemini-3.8-flash": {"acc": 0.5855175477565526, "cost": 1.131685},
+        "gemini-3-flash-preview": {"acc": 0.5027322404371585, "cost": 1.217525},
+        "gemini-3.6-flash": {"acc": 0.5818699572852397, "cost": 1.218827},
+        "gemini-4-argon": {"acc": 0.6312659303313509, "cost": 1.983882},
+        "gemini-3.5-flash": {"acc": 0.6069605568445475, "cost": 2.844681},
+        "gemini-3.1-pro-preview": {"acc": 0.6239151398264223, "cost": 4.581762},
     },
     "medec": {
         "gpt-5": {"acc": 0.7724715715510082, "cost": 1.008255},
@@ -46,17 +46,17 @@ MODEL_STATS = {
         "gemini-2.5-flash-lite": {"acc": 0.19866666666666666, "cost": 0.71},
     },
     "sustainability": {
-        "gpt-5": {"acc": 0.52, "cost": 8.100397},
-        "gpt-5-mini": {"acc": 0.5517241379310345, "cost": 1.608668},
-        "gpt-5-nano": {"acc": 0.48148148148148145, "cost": 0.36},
-        "gpt-4.1": {"acc": 0.5454545454545454, "cost": 14.88},
-        "gpt-4.1-mini": {"acc": 0.6521739130434783, "cost": 2.849562},
-        "gpt-4.1-nano": {"acc": 0.4666666666666667, "cost": 0.74},
-        "gpt-4o": {"acc": 0.7142857142857143, "cost": 13.23},
-        "gpt-4o-mini": {"acc": 0.5, "cost": 0.82},
-        "gemini-2.5-pro": {"acc": 0.5869565217391305, "cost": 16.68},
-        "gemini-2.5-flash": {"acc": 0.5714285714285714, "cost": 2.852281},
-        "gemini-2.5-flash-lite": {"acc": 0.7692307692307693, "cost": 0.795008},
+        # Gemini sweep on the original pipeline, train split (40 docs), 2026-11-08;
+        # acc = combined_score (the search reward); cost in USD for the 40 documents.
+        "gemini-3.1-flash-lite": {"acc": 0.7222222222222222, "cost": 1.621415},
+        "gemini-3.5-flash-lite": {"acc": 0.7297297297297297, "cost": 2.027031},
+        "gemini-3-flash-preview": {"acc": 0.7567567567567568, "cost": 3.377226},
+        "gemini-3.8-flash": {"acc": 0.7571428571428571, "cost": 4.721345},
+        "gemini-3.6-flash": {"acc": 0.7714285714285715, "cost": 5.177072},
+        "gemini-3.7-flash": {"acc": 0.7361111111111112, "cost": 5.482474},
+        "gemini-3.5-flash": {"acc": 0.7714285714285715, "cost": 9.51586},
+        "gemini-4-argon": {"acc": 0.8, "cost": 12.311158},
+        "gemini-3.1-pro-preview": {"acc": 0.7162162162162162, "cost": 20.52302},
     },
     "blackvault": {
         "gpt-5": {"acc": 2.58974358974359, "cost": 2.607966},
@@ -85,11 +85,11 @@ MODEL_STATS = {
 
 FRONTIER_MODELS = {
     "cuad": {
-        "gemini-2.5-flash-lite",
-        "gpt-5-nano",
-        "gpt-4.1-mini",
-        "gemini-2.5-flash",
-        "gpt-4.1",
+        # Pareto frontier of the 9-model sweep under avg_f1.
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-3.7-flash",
+        "gemini-4-argon",
     },
     "medec": {
         "gpt-4.1-nano",
@@ -106,8 +106,13 @@ FRONTIER_MODELS = {
         "gpt-5-mini",
     },
     "sustainability": {
-        "gpt-5-nano",
-        "gemini-2.5-flash-lite",
+        # Pareto frontier of the 9-model sweep under combined_score.
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-4-argon",
     },
     "blackvault": {
         "gpt-5-nano",
@@ -126,17 +131,16 @@ FRONTIER_MODELS = {
 
 MODEL_COSTS = {
     "cuad": {
-        "gpt-5": 2.282243,
-        "gpt-5-mini": 0.605154,
-        "gpt-5-nano": 0.231796,
-        "gpt-4.1": 2.026396,
-        "gpt-4.1-mini": 0.380290,
-        "gpt-4.1-nano": 0.080214,
-        "gpt-4o": 2.210165,
-        "gpt-4o-mini": 0.137882,
-        "gemini-2.5-pro": 2.820552,
-        "gemini-2.5-flash": 1.032156,
-        "gemini-2.5-flash-lite": 0.097669,
+        # Gemini sweep on the original pipeline, train split (40 contracts), 2026-11-10.
+        "gemini-3.1-flash-lite": 0.196732,
+        "gemini-3.5-flash-lite": 0.281492,
+        "gemini-3.7-flash": 1.065943,
+        "gemini-3.8-flash": 1.131685,
+        "gemini-3-flash-preview": 1.217525,
+        "gemini-3.6-flash": 1.218827,
+        "gemini-4-argon": 1.983882,
+        "gemini-3.5-flash": 2.844681,
+        "gemini-3.1-pro-preview": 4.581762,
     },
     "medec": {
         "gpt-5": 1.008255,
@@ -162,17 +166,16 @@ MODEL_COSTS = {
         "gemini-2.5-flash-lite": 0.71,
     },
     "sustainability": {
-        "gpt-5": 8.100397,
-        "gpt-5-mini": 1.608668,
-        "gpt-5-nano": 0.36,
-        "gpt-4.1": 14.88,
-        "gpt-4.1-mini": 2.849562,
-        "gpt-4.1-nano": 0.74,
-        "gpt-4o": 13.23,
-        "gpt-4o-mini": 0.82,
-        "gemini-2.5-pro": 16.68,
-        "gemini-2.5-flash": 2.852281,
-        "gemini-2.5-flash-lite": 0.795008,
+        # Gemini sweep on the original pipeline, train split (40 docs), 2026-11-08.
+        "gemini-3.1-flash-lite": 1.621415,
+        "gemini-3.5-flash-lite": 2.027031,
+        "gemini-3-flash-preview": 3.377226,
+        "gemini-3.8-flash": 4.721345,
+        "gemini-3.6-flash": 5.177072,
+        "gemini-3.7-flash": 5.482474,
+        "gemini-3.5-flash": 9.51586,
+        "gemini-4-argon": 12.311158,
+        "gemini-3.1-pro-preview": 20.52302,
     },
     "blackvault": {
         "gpt-5": 2.607966,
@@ -200,11 +203,10 @@ MODEL_COSTS = {
 
 first_layer_yaml_paths = {
     "cuad": [
-        "gemini_2.5_flash_lite_config.yaml",
-        "gpt_5_nano_config.yaml",
-        "gpt_4.1_mini_config.yaml",
-        "gemini_2.5_flash_config.yaml",
-        "gpt_4.1_config.yaml",
+        "gemini_3.1_flash_lite_config.yaml",
+        "gemini_3.5_flash_lite_config.yaml",
+        "gemini_3.7_flash_config.yaml",
+        "gemini_4_argon_config.yaml",
     ],
     "medec": [
         "gpt_4.1_nano_config.yaml",
@@ -221,8 +223,12 @@ first_layer_yaml_paths = {
         "gpt_5_mini_config.yaml",
     ],
     "sustainability": [
-        "gpt_5_nano_config.yaml",
-        "gemini_2.5_flash_lite_config.yaml",
+        "gemini_3.1_flash_lite_config.yaml",
+        "gemini_3.5_flash_lite_config.yaml",
+        "gemini_3_flash_preview_config.yaml",
+        "gemini_3.8_flash_config.yaml",
+        "gemini_3.6_flash_config.yaml",
+        "gemini_4_argon_config.yaml",
     ],
     "blackvault": [
         "gpt_5_nano_config.yaml",
@@ -240,11 +246,10 @@ first_layer_yaml_paths = {
 
 first_layer_yaml_paths_pruned = {
     "cuad": [
-        "gemini_2.5_flash_lite_config.yaml",
-        "gpt_5_nano_config.yaml",
-        "gpt_4.1_mini_config.yaml",
-        "gemini_2.5_flash_config.yaml",
-        "gpt_4.1_config.yaml",
+        "gemini_3.1_flash_lite_config.yaml",
+        "gemini_3.5_flash_lite_config.yaml",
+        "gemini_3.7_flash_config.yaml",
+        "gemini_4_argon_config.yaml",
     ],
     "medec": [
         "gpt_4o_mini_config.yaml",
@@ -260,7 +265,12 @@ first_layer_yaml_paths_pruned = {
         "gpt_5_config.yaml",
     ],
     "sustainability": [
-        "gemini_2.5_flash_lite_config.yaml",
+        "gemini_3.1_flash_lite_config.yaml",
+        "gemini_3.5_flash_lite_config.yaml",
+        "gemini_3_flash_preview_config.yaml",
+        "gemini_3.8_flash_config.yaml",
+        "gemini_3.6_flash_config.yaml",
+        "gemini_4_argon_config.yaml",
     ],
     "blackvault": [
         "gpt_4o_mini_config.yaml",

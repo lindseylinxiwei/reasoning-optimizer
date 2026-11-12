@@ -20,9 +20,19 @@ FRONT = "#2a78d6"
 MARKERS = {"head_tail": ("o", "Head/tail"), "topk": ("s", "Top-k retrieval"),
            "jev": ("^", "Jev retrieval"), "summarization": ("D", "Summarization")}
 FULL_TEXT = {"plan": "full_text", "cost": 2.402, "combined": 0.81, "activity": 0.69}
+# MOAR search plans rerun with every LLM step on gemini-3.5-flash-lite (runs/frontier_scores.json, group "search").
+# Plan 13 is left out: it copied ground-truth labels into its output.
+MOAR_PLANS = ["plan_15", "plan_17", "plan_20"]
+
+
+def moar_rows():
+    rows = json.load(open(HERE / "runs" / "frontier_scores.json"))
+    return [r for r in rows if r["run"] in MOAR_PLANS]
 
 
 def code(plan):
+    if plan.startswith("moar_"):
+        return "MOAR " + plan.split("_")[1]
     special = {"topk_3_fts": "K3-bm25", "topk_3_half_chunks": "K3-half", "jev_3_adaptive": "J3-adapt"}
     if plan in special:
         return special[plan]
@@ -39,12 +49,13 @@ def frontier(rows, key):
     return out
 
 
-def place_labels(ax, fig, points, key, front_y):
+def place_labels(ax, fig, points, key, front_y, extra=()):
     """Place each code at the first candidate offset whose rendered box overlaps no point, no
     earlier label and not the frontier line (all checked in display coordinates)."""
     renderer = fig.canvas.get_renderer()
     to_px = ax.transData.transform
-    dots = [to_px((r["cost"], r[key])) for r in points] + [to_px((FULL_TEXT["cost"], FULL_TEXT[key]))]
+    dots = ([to_px((r["cost"], r[key])) for r in points] + [to_px((FULL_TEXT["cost"], FULL_TEXT[key]))]
+            + [to_px(p) for p in extra])
     line_y = to_px((1, front_y))[1]
     taken = []
     candidates = [(8, 0), (0, -11), (8, -10), (8, 10), (-8, 0), (0, 11), (-8, -10), (-8, 10),
@@ -69,8 +80,9 @@ def place_labels(ax, fig, points, key, front_y):
                                      color=TEXT).get_window_extent(renderer))
 
 
-def main():
+def main(with_moar=False):
     rows = json.load(open(OUT / "scores.json"))
+    moar = moar_rows() if with_moar else []
     fig, axes = plt.subplots(1, 2, figsize=(14, 6.4), facecolor=SURFACE)
     for ax, (key, title) in zip(axes, [("combined", "Combined score (activity + names)"),
                                        ("activity", "Activity accuracy (MOAR's search reward)")]):
@@ -94,8 +106,21 @@ def main():
                     xytext=(0, -12), ha="center", va="top", fontsize=11, color=TEXT)
         ax.set_xscale("log")
         ax.set_xlim(0.035, 3.2)
+        extra = []
+        if moar:
+            lo = min(r[key] for r in rows) - 0.02
+            ax.set_ylim(bottom=lo)
+            for m in moar:
+                name = "MOAR " + m["run"].split("_")[1]
+                if m[key] >= lo:
+                    ax.scatter(m["cost"], m[key], marker="X", s=90, color=TEXT, edgecolor=SURFACE, linewidth=1.2, zorder=4)
+                    extra.append({"plan": "moar_" + m["run"].split("_")[1], "cost": m["cost"], key: m[key]})
+                else:  # collapsed plan: mark it at the bottom edge with its value
+                    ax.annotate(f"{name}: {m[key]:.2f} (off scale)", xy=(m["cost"], lo), xytext=(m["cost"], lo + 0.02),
+                                ha="center", va="bottom", fontsize=10, color=TEXT,
+                                arrowprops=dict(arrowstyle="-|>", color=TEXT, lw=1))
         fig.canvas.draw()
-        place_labels(ax, fig, rows, key, front[0][key])
+        place_labels(ax, fig, rows + extra, key, front[0][key])
         ax.xaxis.set_major_locator(FixedLocator([0.05, 0.1, 0.2, 0.5, 1, 2]))
         ax.xaxis.set_minor_locator(NullLocator())
         ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:g}"))
@@ -112,15 +137,22 @@ def main():
     handles += [plt.Line2D([], [], ls="", marker="o", markersize=8, color=FRONT, label="On the Pareto frontier"),
                 plt.Line2D([], [], color=FRONT, lw=1.5, ls=(0, (4, 3)), label="Pareto frontier"),
                 plt.Line2D([], [], ls="", marker="*", markersize=10, color=TEXT, label="Full text (no decomposition)")]
-    fig.legend(handles=handles, loc="upper left", ncol=4, frameon=False, fontsize=11.5,
+    if moar:
+        handles.append(plt.Line2D([], [], ls="", marker="X", markersize=8, color=TEXT,
+                                  label="MOAR search plan (rerun on flash-lite)"))
+    fig.legend(handles=handles, loc="upper left", ncol=4 if not moar else 4, frameon=False, fontsize=11.5,
                bbox_to_anchor=(0.04, 0.995), labelcolor=TEXT)
     fig.text(0.04, 0.008, "Codes: H = head/tail, K = top-k, J = Jev, S = summarization; number = level (1 = least text).\n"
-             "gemini-3.5-flash-lite, train_50, corrected evaluator, one run each (1 report = about 0.023).",
+             "gemini-3.5-flash-lite, train_50, corrected evaluator, one run each (1 report = about 0.023)."
+             + ("\nMOAR plans: the search's frontier plans with every LLM step on gemini-3.5-flash-lite; plan 13 omitted "
+                "(it copied labels)." if moar else ""),
              fontsize=11, color=TEXT_2)
-    fig.tight_layout(rect=(0, 0.07, 1, 0.89))
-    fig.savefig(OUT / "frontier_all.png", dpi=110, facecolor=SURFACE)
-    print("wrote", OUT / "frontier_all.png")
+    fig.tight_layout(rect=(0, 0.10 if moar else 0.07, 1, 0.89))
+    out = OUT / ("frontier_all_moar.png" if moar else "frontier_all.png")
+    fig.savefig(out, facecolor=SURFACE, dpi=110)
+    print("wrote", out)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(with_moar="--with-moar" in sys.argv)

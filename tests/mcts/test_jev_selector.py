@@ -139,8 +139,8 @@ class ExpansionIntegrationTests(unittest.TestCase):
         for error in (JevAPIError("HTTP 401"), RuntimeError("Action space may be exhausted")):
             with self.subTest(error=type(error).__name__):
                 tree = MCTS.__new__(MCTS)
-                node = SimpleNamespace(get_id=lambda: 1, visits=1)
-                tree.root = node
+                node = SimpleNamespace(get_id=lambda: 1, visits=1, children=[], cost=1.0)
+                tree.root = SimpleNamespace(children=[node], cost=-1)
                 tree.tree_lock = threading.RLock()
                 tree.select = Mock(return_value=node)
                 tree.is_first_layer_node = Mock(return_value=False)
@@ -153,7 +153,10 @@ class ExpansionIntegrationTests(unittest.TestCase):
                         tree.mcts_iteration()
                     self.assertFalse(tree.action_space_exhausted)
                 else:
-                    self.assertFalse(tree.mcts_iteration())
+                    # The node is marked and skipped by selection; the search stops only when
+                    # every leaf is marked (here the only one).
+                    self.assertIsNone(tree.mcts_iteration())
+                    self.assertTrue(node.no_actions)
                     self.assertTrue(tree.action_space_exhausted)
 
     def test_jev_and_llm_both_preserve_instantiation_and_history(self):
@@ -165,14 +168,19 @@ class ExpansionIntegrationTests(unittest.TestCase):
                 tree.model = "original-instantiation-model"
                 tree.tree_lock = threading.RLock()
                 tree.total_search_cost = 0.0
+                tree.agent_cost = tree.pipeline_cost = 0.0
+                tree.iteration_count = 0
                 tree.selector_calls = []
                 tree.output_dir = output
+                tree.costs_log_path = f"{output}/costs.jsonl"
+                tree.use_param_grid = True
                 tree.available_actions = {d}
                 tree.directive_name_to_obj = {d.name: d}
                 tree.action_counts = {d: 0}
                 tree.dataset_name = "cuad"
                 tree.expansion_prompt_acc = Mock(return_value=("original selection context", "condensed"))
-                tree.instantiate_node = Mock(return_value="child")
+                child = SimpleNamespace()
+                tree.instantiate_node = Mock(return_value=child)
                 node = SimpleNamespace(
                     op_dict={"a": {"name": "a", "type": "map"}},
                     parsed_yaml={"operations": [{"name": "a", "type": "map"}],
@@ -193,12 +201,12 @@ class ExpansionIntegrationTests(unittest.TestCase):
                     return node.parsed_yaml["operations"], kw["message_history"], 0.2
                 with patch.object(ChainingDirective, "instantiate", side_effect=instantiate) as inst, \
                      patch("docetl.mcts.mcts.agent_completion", return_value=(response, 0.03)) as llm:
-                    self.assertEqual(tree.expand(node, "acc"), ["child"])
+                    self.assertEqual(tree.expand(node, "acc"), [child])
                     inst.assert_called_once()
                     self.assertEqual(llm.call_count, 0 if backend == "jev" else 1)
                 self.assertAlmostEqual(tree.total_search_cost, 0.21 if backend == "jev" else 0.23)
                 node.mark_action_used.assert_called_once_with("a", d)
-                self.assertEqual(tree.action_counts[d], 1)
+                self.assertEqual(tree.action_counts[d], 0)    # counted once a child runs successfully
                 if backend == "jev":
                     self.assertEqual(json.loads((Path(output) / "jev_selection_calls.jsonl").read_text())["node_id"], 7)
 

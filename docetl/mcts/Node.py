@@ -195,6 +195,8 @@ class Node:
         def ucb(child: Node) -> float:
             if child.cost == -1 or child.visits == 0:
                 return float('-inf')
+            if getattr(child, "no_actions", False) and not child.children:
+                return float('-inf')
             exploitation = child.value / child.visits
             exploration = self.c * math.sqrt(math.log(self.visits) / child.visits)
             return exploitation + exploration

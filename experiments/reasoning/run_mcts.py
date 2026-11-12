@@ -10,7 +10,10 @@ It's extracted from the MCTS folder to provide a clean experiment interface.
 # load_dotenv() would otherwise pick up a package-level .env first).
 from pathlib import Path as _Path
 from dotenv import load_dotenv as _load_dotenv
-_load_dotenv(_Path(__file__).resolve().parents[2] / ".env")
+# On Modal the file sits at /root/run_mcts.py and the keys come from the Modal secret instead.
+_here = _Path(__file__).resolve()
+if len(_here.parents) > 2 and (_here.parents[2] / ".env").exists():
+    _load_dotenv(_here.parents[2] / ".env")
 
 import os
 import json
@@ -29,7 +32,33 @@ from experiments.reasoning.evaluation.utils import run_dataset_evaluation, get_e
 # Modal integration
 import modal
 import yaml
-from experiments.reasoning.utils import app, volume, VOLUME_MOUNT_PATH, image
+from experiments.reasoning.utils import app, volume, VOLUME_MOUNT_PATH, search_image
+# Registers evaluate_remote / run_dataset_evaluation_remote on the app, so the label-free search
+# container can call them (it holds no ground-truth file; see label_isolation.py).
+import experiments.reasoning.remote_eval  # noqa: F401
+
+# Rewrites left out of the search unless asked for. "change model cost" is the generic entry;
+# the search adds one model-change rewrite per model in change_model_cost.MODEL_COSTS itself.
+DEFAULT_EXCLUDED_DIRECTIVES = ("hierarchical_reduce", "chunk_header_summary", "change model cost")
+
+# Modal's maximum function timeout. A search that runs longer stops here; run the same command
+# again and it resumes from the checkpoint on the volume.
+SEARCH_TIMEOUT_S = 24 * 60 * 60
+
+
+def select_directives(exclude=DEFAULT_EXCLUDED_DIRECTIVES, only=None):
+    names = {d.name for d in ALL_DIRECTIVES}
+    for n in list(exclude or ()) + list(only or ()):
+        if n not in names:
+            raise ValueError(f"Unknown directive {n!r}; known: {sorted(names)}")
+    chosen = [d for d in ALL_DIRECTIVES if d.name not in set(exclude or ())]
+    if only:
+        chosen = [d for d in chosen if d.name in set(only)]
+    return set(chosen)
+
+
+def _names(csv: str | None):
+    return [x.strip() for x in csv.split(",") if x.strip()] if csv else None
 
 
 
@@ -77,7 +106,9 @@ def _rewrite_pipeline_yaml_for_modal(orig_yaml_path: str, experiment_name: str) 
     return str(new_yaml_path)
 
 
-@app.function(image=image, secrets=[modal.Secret.from_dotenv()], volumes={VOLUME_MOUNT_PATH: volume}, timeout=60 * 60 * 12)
+# retries: a crashed container is restarted with the same arguments and resumes from the checkpoint.
+@app.function(image=search_image, secrets=[modal.Secret.from_dotenv()], volumes={VOLUME_MOUNT_PATH: volume},
+              timeout=SEARCH_TIMEOUT_S, retries=modal.Retries(max_retries=2, initial_delay=60.0))
 def run_mcts_remote(
     yaml_path: str,
     dataset_path: str,
@@ -94,6 +125,11 @@ def run_mcts_remote(
     selector_backend: str = "llm",
     jev_model: str = DEFAULT_JEV_MODEL,
     jev_input_price: float = DEFAULT_INPUT_PRICE,
+    max_budget_usd: float | None = None,
+    exclude_directives: str | None = ",".join(DEFAULT_EXCLUDED_DIRECTIVES),
+    only_directives: str | None = None,
+    cost_guard_fraction: float = 0.10,
+    prior: Dict[str, Any] | None = None,
 ):
     os.environ["EXPERIMENT_OUTPUT_DIR"] = str(Path(VOLUME_MOUNT_PATH) / "outputs")
     resolved_output_dir = _resolve_in_volume(output_dir) if output_dir else None
@@ -117,6 +153,12 @@ def run_mcts_remote(
         selector_backend=selector_backend,
         jev_model=jev_model,
         jev_input_price=jev_input_price,
+        max_budget_usd=max_budget_usd,
+        exclude_directives=_names(exclude_directives),
+        only_directives=_names(only_directives),
+        checkpoint_hook=volume.commit,
+        cost_guard_fraction=cost_guard_fraction,
+        prior=prior,
     )
     volume.commit()
     return results
@@ -138,10 +180,18 @@ def modal_main_mcts(
     selector_backend: str = "llm",
     jev_model: str = DEFAULT_JEV_MODEL,
     jev_input_price: float = DEFAULT_INPUT_PRICE,
+    max_budget_usd: float = 0.0,
+    exclude_directives: str = ",".join(DEFAULT_EXCLUDED_DIRECTIVES),
+    only_directives: str = "",
+    cost_guard_fraction: float = 0.10,
+    prior_path: str = "",
 ):
     # Note: original_query_result cannot be passed via CLI, so it's not included here.
     # Use programmatic calls to run_mcts_remote if you need to pass original_query_result.
-    run_mcts_remote.remote(
+    # spawn, not remote: the search runs on Modal without waiting on this client, so a lost local
+    # connection does not cancel it. Launch with `modal run --detach` so the app outlives the client;
+    # follow it with `modal app logs <app id>` and find results on the volume.
+    call = run_mcts_remote.spawn(
         yaml_path=yaml_path,
         dataset_path=dataset_path,
         data_dir=data_dir,
@@ -157,7 +207,13 @@ def modal_main_mcts(
         selector_backend=selector_backend,
         jev_model=jev_model,
         jev_input_price=jev_input_price,
+        max_budget_usd=max_budget_usd or None,
+        exclude_directives=exclude_directives,
+        only_directives=only_directives or None,
+        cost_guard_fraction=cost_guard_fraction,
+        prior=json.load(open(prior_path)) if prior_path else None,
     )
+    print(f"Search spawned on Modal (function call {call.object_id}); it keeps running if this client exits.")
 
 
 def run_mcts_experiment(
@@ -176,6 +232,12 @@ def run_mcts_experiment(
     selector_backend: str = "llm",
     jev_model: str = DEFAULT_JEV_MODEL,
     jev_input_price: float = DEFAULT_INPUT_PRICE,
+    max_budget_usd: float | None = None,
+    exclude_directives=DEFAULT_EXCLUDED_DIRECTIVES,
+    only_directives=None,
+    checkpoint_hook=None,
+    cost_guard_fraction: float = 0.10,
+    prior: Dict[str, Any] | None = None,
 ):
     """
     Run MCTS optimization experiment with specified parameters.
@@ -224,8 +286,19 @@ def run_mcts_experiment(
         sample_input_data = dataset_data
     
     
-    # Use all registered rewrite directives from the central registry
-    available_actions = set(ALL_DIRECTIVES)
+    # Document-length statistics shown to the agent and used for cost estimates, from this run's
+    # input documents (label fields stripped).
+    from docetl.mcts import param_grid
+    from docetl.mcts.label_guard import strip_labels
+    if isinstance(dataset_data, list):
+        print(param_grid.configure_corpus(strip_labels(dataset_data, dataset)))
+
+    available_actions = select_directives(exclude_directives, only_directives)
+    print(f"Directives ({len(available_actions)}): {sorted(d.name for d in available_actions)}")
+    # A directory with a checkpoint is a search to continue (a rerun after a crash or timeout).
+    resume = (output_path / "checkpoint.json").exists()
+    print(f"Budget: {'$%.2f' % max_budget_usd if max_budget_usd else 'none'}; "
+          f"{'resuming from checkpoint' if resume else 'fresh search'}")
     
     # Get dataset statistics
     dataset_stats = get_dataset_stats(dataset, yaml_path)
@@ -246,6 +319,11 @@ def run_mcts_experiment(
         selector_backend=selector_backend,
         jev_model=jev_model,
         jev_input_price=jev_input_price,
+        max_budget_usd=max_budget_usd,
+        resume=resume,
+        checkpoint_hook=checkpoint_hook,
+        cost_guard_fraction=cost_guard_fraction,
+        prior=prior,
     )
     print(f"✅ MCTS initialized with root node: {yaml_path}")
     # Run MCTS optimization
@@ -297,7 +375,7 @@ def run_mcts_experiment(
         "end_time": end_time.isoformat(),
         "duration_seconds": duration,
         "num_best_nodes": len(best_nodes) if best_nodes else 0,
-        "total_nodes_explored": len(mcts.all_nodes) if hasattr(mcts, 'all_nodes') else 0,
+        "total_nodes_explored": (len(mcts._all_nodes()) - 1) if hasattr(mcts, "_all_nodes") else None,
         "original_query_cost": original_query_result["cost"] if original_query_result and original_query_result["success"] else None,
         "original_query_success": original_query_result["success"] if original_query_result else None,
     }
@@ -374,6 +452,13 @@ Examples:
     parser.add_argument("--jev_model", default=DEFAULT_JEV_MODEL)
     parser.add_argument("--jev_input_price", type=float, default=DEFAULT_INPUT_PRICE,
                         help="Jev input price in USD per million tokens (output is free)")
+    parser.add_argument("--max_budget_usd", type=float, default=None)
+    parser.add_argument("--exclude_directives", default=",".join(DEFAULT_EXCLUDED_DIRECTIVES))
+    parser.add_argument("--only_directives", default=None)
+    parser.add_argument("--cost_guard_fraction", type=float, default=0.10,
+                        help="Skip a child whose estimated cost is above this share of the budget left")
+    parser.add_argument("--prior_path", default=None,
+                        help="JSON from an earlier sweep: evidence text, prior counts, seed view")
     args = parser.parse_args()
     
     result = run_mcts_experiment(
@@ -390,6 +475,11 @@ Examples:
         selector_backend=args.selector_backend,
         jev_model=args.jev_model,
         jev_input_price=args.jev_input_price,
+        max_budget_usd=args.max_budget_usd,
+        exclude_directives=_names(args.exclude_directives),
+        only_directives=_names(args.only_directives),
+        cost_guard_fraction=args.cost_guard_fraction,
+        prior=json.load(open(args.prior_path)) if args.prior_path else None,
     )
     
     print("\n🎉 MCTS experiment completed successfully!")

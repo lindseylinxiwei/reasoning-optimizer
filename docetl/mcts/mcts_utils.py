@@ -39,6 +39,70 @@ MAX_CONTEXT_TOKENS = 270_000
 class ExpandResponseFormat(BaseModel):
     directive: str
     operators: List[str]
+    reason: str = ""
+
+
+def format_action_options(action_options, choice_counts=None, prior_counts=None) -> str:
+    """One line per (operator, rewrite). With choice_counts (rewrite family -> times the agent chose it
+    in this search), rewrites chosen least come first and each line says how often it was chosen.
+    prior_counts (family -> runs in an earlier sweep) count toward the order and are named."""
+    if choice_counts is None:
+        return "".join(f"Operator: {op}, Rewrite directive: {name}\n" for op, name in action_options)
+    prior_counts = prior_counts or {}
+    fam = {name: rewrite_family(name) for _, name in action_options}
+    total = {name: choice_counts.get(f, 0) + prior_counts.get(f, 0) for name, f in fam.items()}
+    lines = []
+    for op, name in sorted(action_options, key=lambda o: (total[o[1]], o[1], o[0])):
+        n, p = choice_counts.get(fam[name], 0), prior_counts.get(fam[name], 0)
+        here = "not tried yet in this search" if n == 0 else f"chosen {n} time{'s' if n != 1 else ''} in this search"
+        note = f"{p} configurations tested in the earlier data-view sweep; {here}" if p else here
+        lines.append(f"Operator: {op}, Rewrite directive: {name} ({note})\n")
+    return "".join(lines)
+
+
+EXPLORATION_NOTE = (
+    "\n\nExploration turn: so that the search learns about rewrites it has rarely tried, the valid choices "
+    "above are limited to the least-chosen rewrites that apply to this plan. Pick the one most likely to help "
+    "this plan. If none of them can work on this plan, answer with directive \"none\", operators [], and a "
+    "one-sentence reason in the reason field; you will then get the full list.\n")
+
+
+def rewrite_family(name: str) -> str:
+    """Model switches count as one rewrite ('change model'); other rewrites by name."""
+    return "change model" if name.startswith("change to ") else name
+
+
+LLM_OP_TYPES = {"map", "filter", "reduce", "parallel_map", "resolve", "extract", "equijoin"}
+REDUCE_REWRITES = {"reduce_gleaning", "reduce_chaining", "swap_with_code", "hierarchical_reduce"}
+
+
+def fits_plan_structure(ops: List[Dict], op_name: str, name: str) -> bool:
+    """False when a rewrite cannot apply to this plan's shape, so it is not offered (and does not
+    sit forever among the least-chosen rewrites on exploration turns)."""
+    names = [o.get("name") for o in ops]
+    if op_name not in names:
+        return True
+    i = names.index(op_name)
+    kind = ops[i].get("type")
+    if name in REDUCE_REWRITES:
+        return kind == "reduce"
+    if name == "cascade_filtering":
+        return kind == "filter"
+    if name == "chunk_header_summary":
+        kinds = {o.get("type") for o in ops}
+        return "split" in kinds and "gather" in kinds
+    if name == "operator_fusion":
+        if kind not in LLM_OP_TYPES:
+            return False
+        return any(0 <= j < len(ops) and ops[j].get("type") in LLM_OP_TYPES for j in (i - 1, i + 1))
+    if name == "map_reduce_fusion":
+        return kind == "map" and any(o.get("type") == "reduce" for o in ops[i + 1:])
+    return True
+
+
+class ShorteningChoice(BaseModel):
+    directive: str
+    reason: str
 
 
 def count_tokens(messages):
@@ -174,7 +238,9 @@ def fix_models(parsed_yaml):
 def is_fully_explored(node, max_children_multiplier: float = 1.0) -> bool:
     """Check if a node has been fully explored based on visit count."""
     if node.parent is None:
-        return True
+        return bool(node.children)   # without a first layer the root is expanded directly
+    if getattr(node, "no_actions", False) and node.children:
+        return True     # nothing left to add here; descend into its children
     allowed_children = max(2, 1 + math.floor(math.sqrt(float(node.visits)) * max_children_multiplier))
     return len(node.children) >= allowed_children
 
@@ -230,19 +296,14 @@ def log_tree_to_file(root_node, iteration_num, output_dir="./outputs"):
         print_tree_visits_and_values(root_node, file_handle=f)
 
 
-def create_expansion_prompt_acc(node, action_options, input_query, available_actions, action_cost_changes, action_accuracy_changes, action_counts, sample_input, root_node, yaml_file_path, dataset=None, node_accuracies=None) -> tuple[str, str]:
+def create_expansion_prompt_acc(node, action_options, input_query, available_actions, action_cost_changes, action_accuracy_changes, action_counts, sample_input, root_node, yaml_file_path, dataset=None, node_accuracies=None, choice_counts=None, prior_counts=None) -> tuple[str, str]:
     """Create expansion prompt for accuracy optimization."""
     
     ### DEBUG 
     print("memo: ")
     print(node.get_memo_for_llm(root_node, node_accuracies))
 
-    availabel_actions_str = ""
-    for item in action_options:
-        op_name = item[0]
-        action_name = item[1]
-        action_str = f"Operator: {op_name}, Rewrite directive: {action_name}\n"
-        availabel_actions_str += action_str
+    availabel_actions_str = format_action_options(action_options, choice_counts, prior_counts)
 
     print("availabel_actions_str: ")
     print(availabel_actions_str)
@@ -257,11 +318,11 @@ def create_expansion_prompt_acc(node, action_options, input_query, available_act
             avg_cost_change = cost_change / count
             avg_accuracy_change = accuracy_change / count
             action_stats.append(
-                f"- {action.name}: {count} uses, avg change in cost: {avg_cost_change:+.2f}, avg change in accuracy: {avg_accuracy_change:+.4f}"
+                f"- {action.name}: {int(count)} successful runs, avg change in cost: {avg_cost_change:+.2f}, avg change in accuracy: {avg_accuracy_change:+.4f}"
             )
         else:
             action_stats.append(
-                f"- {action.name}: {count} uses, avg change in cost: Unknown (never tried), avg change in accuracy: Unknown (never tried)"
+                f"- {action.name}: not run successfully yet"
             )
 
     action_stats_str = "\n".join(action_stats)
@@ -304,21 +365,17 @@ def create_expansion_prompt_acc(node, action_options, input_query, available_act
     {availabel_actions_str}
 
     Action Performance History:
-    Based on previous executions across DIFFERENT query pipelines, here's how each action has performed:\n
+    Based on plans already run in this search, here's how each action has performed (average change vs the plan it was applied to):\n
     {action_stats_str}
 
-    Note: These statistics come from applying actions to various other query pipelines, not the current one. Use this as general guidance about action effectiveness, but consider that performance may vary significantly for your specific pipeline structure and data.
+    Note: These statistics come from applying actions to other plans in this search, not the current one. Use this as general guidance about action effectiveness, but consider that performance may vary for this plan's models and structure.
 
     Model Performance Reference:
     If you are considering a model change directive, here are model statistics on this specific dataset: \n {str(MODEL_STATS.get(dataset, {}))}
     These show the accuracy (acc) and cost for each model. Only reference this when evaluating model change options.
 
     Selection Strategy:
-    Consider the current query pipeline, which directive can best improve the accuracy.
-    Prioritize exploration of untested actions while balancing with exploitation of proven performers:
-    - Actions with 0 uses have unknown potential, so you should explore them if applicable. 
-    - fusion directives are helpful
-    - Consider both immediate improvement and learning about the action space
+    Consider the current query pipeline and which directive can best improve the accuracy.
 
     {node.get_memo_for_llm(root_node, node_accuracies)}
 
@@ -347,7 +404,7 @@ def create_expansion_prompt_acc(node, action_options, input_query, available_act
     return user_message, condensed_user_message
 
 
-def create_expansion_prompt_cost(node, action_options, input_query, available_actions, action_cost_changes, action_accuracy_changes, action_counts, sample_input, root_node, yaml_file_path, dataset=None, node_accuracies=None) -> tuple[str, str]:
+def create_expansion_prompt_cost(node, action_options, input_query, available_actions, action_cost_changes, action_accuracy_changes, action_counts, sample_input, root_node, yaml_file_path, dataset=None, node_accuracies=None, choice_counts=None, prior_counts=None) -> tuple[str, str]:
     """Create expansion prompt for cost optimization."""
 
     ### DEBUG 
@@ -355,12 +412,7 @@ def create_expansion_prompt_cost(node, action_options, input_query, available_ac
     print(node.get_memo_for_llm(root_node, node_accuracies))
     print("***"*50)
 
-    availabel_actions_str = ""
-    for item in action_options:
-        op_name = item[0]
-        action_name = item[1]
-        action_str = f"Operator: {op_name}, Rewrite directive: {action_name}\n"
-        availabel_actions_str += action_str
+    availabel_actions_str = format_action_options(action_options, choice_counts, prior_counts)
 
     print("availabel_actions_str: ")
     print(availabel_actions_str)
@@ -374,11 +426,11 @@ def create_expansion_prompt_cost(node, action_options, input_query, available_ac
             avg_cost_change = cost_change / count
             avg_accuracy_change = accuracy_change / count
             action_stats.append(
-                f"- {action.name}: {count} uses, avg change in cost: {avg_cost_change:+.2f}, avg change in accuracy: {avg_accuracy_change:+.4f}"
+                f"- {action.name}: {int(count)} successful runs, avg change in cost: {avg_cost_change:+.2f}, avg change in accuracy: {avg_accuracy_change:+.4f}"
             )
         else:
             action_stats.append(
-                f"- {action.name}: {count} uses, avg change in cost: Unknown (never tried), avg change in accuracy: Unknown (never tried)"
+                f"- {action.name}: not run successfully yet"
             )
 
     action_stats_str = "\n".join(action_stats)
@@ -421,21 +473,17 @@ def create_expansion_prompt_cost(node, action_options, input_query, available_ac
     {availabel_actions_str}
 
     Action Performance History:
-    Based on previous executions across DIFFERENT query pipelines, here's how each action has performed:\n
+    Based on plans already run in this search, here's how each action has performed (average change vs the plan it was applied to):\n
     {action_stats_str}
 
-    Note: These statistics come from applying actions to various other query pipelines, not the current one. Use this as general guidance about action effectiveness, but consider that performance may vary significantly for your specific pipeline structure and data.
+    Note: These statistics come from applying actions to other plans in this search, not the current one. Use this as general guidance about action effectiveness, but consider that performance may vary for this plan's models and structure.
 
     Model Performance Reference:
     If you are considering a model change directive, here are model statistics on this specific dataset: \n {str(MODEL_STATS.get(dataset, {}))}
     These show the accuracy (acc) and cost for each model. Only reference this when evaluating model change options.
 
     Selection Strategy:
-    Consider the current query pipeline, which directive can best improve cost effectiveness. 
-    Prioritize exploration of untested actions while balancing with exploitation of proven performers:
-    - Actions with 0 uses have unknown potential, so you should explore them if applicable.
-    - fusion directives are helpful
-    - Consider both immediate improvement and learning about the action space
+    Consider the current query pipeline and which directive can best improve cost effectiveness.
 
     {node.get_memo_for_llm(root_node, node_accuracies)}
 
@@ -461,3 +509,33 @@ def create_expansion_prompt_cost(node, action_options, input_query, available_ac
     """
     
     return user_message, condensed_user_message
+
+def disallowed_models(ops, default_model=None) -> list:
+    """Model names in a pipeline outside the allowed lists: LLMs ("model", default_model) must be in
+    AVAILABLE_MODELS or Jev; embedding models must be the Gemini embedding model."""
+    from docetl.reasoning_optimizer.directives.base import AVAILABLE_MODELS
+    allowed = set(AVAILABLE_MODELS)
+    found = []
+
+    def ok(m):
+        m = str(m)
+        return m == "jev" or m.startswith("jev-") or m.split("/", 1)[-1] in allowed
+
+    from docetl.reasoning_optimizer.instantiate_schemas import ALLOWED_EMBEDDING_MODELS
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if k == "model" and isinstance(v, str) and not ok(v):
+                    found.append(v)
+                if k == "embedding_model" and isinstance(v, str) and v not in ALLOWED_EMBEDDING_MODELS:
+                    found.append(v)
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(ops)
+    if default_model and not ok(default_model):
+        found.append(default_model)
+    return sorted(set(found))

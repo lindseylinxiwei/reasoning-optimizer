@@ -1,5 +1,6 @@
 import json
 import os
+from docetl.reasoning_optimizer.effective_length import chunk_size_hint
 from copy import deepcopy
 from typing import Dict, List, Type
 
@@ -192,7 +193,7 @@ class DocumentChunkingDirective(Directive):
             f"Your task is to instantiate this directive by creating a configuration that transforms the original Map operation "
             f"into a Split -> Gather -> Map -> Reduce pipeline for processing long documents in chunks.\n\n"
             f"Key requirements:\n"
-            f"1. chunk_size: Choose an appropriate token count (typically 10000-15000) based on the complexity of the task\n"
+            f"1. chunk_size: {chunk_size_hint(original_op.get('model'))}\n"
             f"2. split_key: Identify the document field to split from the original operation's prompt. Make sure to use the same field as the original operation's prompt.\n"
             f"3. sub_prompt: Take the original prompt exactly but:\n"
             f"   - Add instruction at start: 'You are analyzing a chunk of a larger document.'\n"
@@ -452,8 +453,10 @@ class DocumentChunkingDirective(Directive):
             )
 
         # Instantiate the directive
+        # the chunk map runs on the operation's model; show it so the chunk-size hint uses it
+        shown_op = {**target_op_config, "model": target_op_config.get("model", global_default_model)}
         rewrite, message_history, call_cost = self.llm_instantiate(
-            operators, input_file_path, target_op_config, agent_llm, message_history
+            operators, input_file_path, shown_op, agent_llm, message_history
         )
 
         # Apply the rewrite to the operators

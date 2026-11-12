@@ -8,11 +8,18 @@ VOLUME_MOUNT_PATH = "/mnt/docetl-ro-experiments"
 app = modal.App(APP_NAME)
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True) 
 
-# Common image definition for experiments
-image = (
+# Base layers shared by both images
+_base_image = (
     modal.Image.debian_slim(python_version="3.10")
     .uv_sync()
     .uv_pip_install("matplotlib", "Levenshtein", "nltk")
+)
+
+# Full image: the whole experiments package, including ground-truth files. Used by evaluation
+# (experiments/reasoning/remote_eval.py) and by runners that do not execute agent-written
+# candidate pipelines.
+image = (
+    _base_image
     .add_local_python_source("experiments", ignore=lambda p: (
         # Include othersystems only if it contains lotus_evaluation or pz_evaluation files
         ("othersystems" in str(p) and 
@@ -31,6 +38,53 @@ image = (
     ))
     .add_local_python_source("docetl", ignore=["**/.venv/*"])
 )
+
+
+def _ignore_for_eval_experiments(p):
+    """Evaluation image: Python files plus experiments/reasoning/data (inputs and ground truth)."""
+    if any(part.startswith(".") or part in {"__pycache__", ".venv", "outputs"} for part in p.parts):
+        return True
+    if p.suffix == ".py":
+        return False
+    return tuple(p.parts[:2]) != ("reasoning", "data")
+
+
+# Evaluation image: holds the ground-truth files. Used only by experiments/reasoning/remote_eval.py,
+# which mounts no volume, so nothing it reads is written where the search container can see it.
+eval_image = (
+    _base_image
+    .add_local_python_source("experiments", ignore=_ignore_for_eval_experiments)
+    .add_local_python_source("docetl", ignore=["**/.venv/*"])
+)
+
+
+def _build_search_image():
+    """Label-free image for containers that execute candidate pipelines (the MCTS search).
+
+    It holds no ground-truth file (see experiments/reasoning/label_isolation.py for the rule),
+    so agent-written code operators have nothing to read. DOCETL_LABEL_FREE=1 makes evaluation
+    call evaluate_remote / run_dataset_evaluation_remote on the full image instead."""
+    from experiments.reasoning.label_isolation import (
+        LABEL_FREE_ENV, ignore_for_search_docetl, ignore_for_search_experiments, label_free_train_copies,
+    )
+
+    img = (
+        _base_image
+        .env({LABEL_FREE_ENV: "1"})
+        .add_local_python_source("experiments", ignore=ignore_for_search_experiments)
+        .add_local_python_source("docetl", ignore=ignore_for_search_docetl)
+    )
+    if modal.is_local():
+        import tempfile
+        from pathlib import Path
+
+        build_dir = Path(tempfile.gettempdir()) / "docetl_label_free_train"
+        for local, remote in label_free_train_copies(build_dir):
+            img = img.add_local_file(local, remote)
+    return img
+
+
+search_image = _build_search_image()
 
 
 def create_original_query_result(

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from copy import deepcopy
 from typing import Dict, List, Type
 
@@ -11,6 +12,36 @@ from .base import MAX_DIRECTIVE_INSTANTIATION_ATTEMPTS, Directive, DirectiveTest
 from .agent_utils import agent_completion, is_together_model, _extract_json_from_text
 
 
+_SKIP_KEYS = ("name", "type", "model")
+
+
+def _read_key(op: Dict, key: str, new_key: str) -> bool:
+    """Point every template reference to `key` in the operation at `new_key`; True if any changed."""
+    pattern = re.compile(r"(\.)" + re.escape(key) + r"\b|(\[\s*['\"])" + re.escape(key) + r"(['\"]\s*\])")
+
+    def sub(text: str) -> str:
+        return pattern.sub(lambda m: f".{new_key}" if m.group(1) else f"{m.group(2)}{new_key}{m.group(3)}", text)
+
+    changed = False
+
+    def walk(value):
+        nonlocal changed
+        if isinstance(value, str):
+            new = sub(value)
+            changed |= new != value
+            return new
+        if isinstance(value, dict):
+            return {k: (v if k in _SKIP_KEYS else walk(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        return value
+
+    for k in list(op):
+        if k not in _SKIP_KEYS:
+            op[k] = walk(op[k])
+    return changed
+
+
 class TakeHeadTailDirective(Directive):
     name: str = Field(default="take_head_tail", description="The name of the directive")
     formal_description: str = Field(
@@ -18,7 +49,7 @@ class TakeHeadTailDirective(Directive):
         description="Inserts a Code Map operation before any LLM-powered operation (Map, Filter, Reduce) to truncate document content to head and tail words",
     )
     nl_description: str = Field(
-        default="Reduces document length by keeping only the first k words and optionally the last l words of the longest document field. This improves cost efficiency and can enhance accuracy for tasks that only require document beginnings (like classification)."
+        default="Reduces document length by keeping only the first k words and optionally the last l words of the longest document field. The cut text is written to a new field that only the target operation reads; other operations keep reading the full field, so each operation can get its own cut. This improves cost efficiency and can enhance accuracy for tasks that only require document beginnings (like classification)."
     )
     when_to_use: str = Field(
         default="When any LLM operation (Map, Filter, Reduce) only needs the beginning (and optionally end) of documents, such as classification tasks, filtering by document type, reducing document summaries, or when full document content causes accuracy issues due to too much context."
@@ -61,11 +92,11 @@ class TakeHeadTailDirective(Directive):
                 else:
                     head = ' '.join(words[:150])
                     truncated = head
-                return {'paper_text': truncated}
+                return {'paper_text_for_classify_research_domain': truncated}
         - name: classify_research_domain
           type: map
           prompt: |
-            What research domain does this paper belong to? Classify as Computer Science, Biology, Physics, Chemistry, or Other based on: {{ input.paper_text }}
+            What research domain does this paper belong to? Classify as Computer Science, Biology, Physics, Chemistry, or Other based on: {{ input.paper_text_for_classify_research_domain }}
           output:
             schema:
               domain: "string"
@@ -281,6 +312,20 @@ class TakeHeadTailDirective(Directive):
         head_words = rewrite.head_words
         tail_words = rewrite.tail_words
         document_key = rewrite.document_key
+        # The cut text goes to a key of its own that only the target operation reads, so each
+        # operation can have its own view and later operations still see the full text.
+        suffix = f"_for_{target_op}"
+        if document_key.endswith(suffix):
+            document_key = document_key[: -len(suffix)]
+        view_key = f"{document_key}{suffix}"
+        target = new_ops_list[pos_to_replace]
+        # The operation already has a cut of this field: replace that cut (wider or narrower)
+        # instead of cutting the cut.
+        existing = [i for i, op in enumerate(new_ops_list[:pos_to_replace])
+                    if op.get("type") == "code_map" and f"'{view_key}':" in (op.get("code") or "")]
+        if not existing and not _read_key(target, document_key, view_key):
+            raise ValueError(f"{target_op} does not read {document_key!r}; take_head_tail cuts a field the "
+                             "target operation reads")
 
         code_map_function = f"""def transform(input_doc):
     {document_key}_content = input_doc.get('{document_key}', '')
@@ -297,7 +342,7 @@ class TakeHeadTailDirective(Directive):
         else:
             truncated = head
 
-    return {{'{document_key}': truncated}}"""
+    return {{'{view_key}': truncated}}"""
 
         code_map_op = {
             "name": rewrite.name,
@@ -305,7 +350,10 @@ class TakeHeadTailDirective(Directive):
             "code": code_map_function,
         }
 
-        new_ops_list.insert(pos_to_replace, code_map_op)
+        if existing:
+            new_ops_list[existing[-1]] = code_map_op
+        else:
+            new_ops_list.insert(pos_to_replace, code_map_op)
 
         return new_ops_list
 

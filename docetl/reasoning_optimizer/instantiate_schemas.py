@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -142,6 +142,10 @@ class ChainingInstantiateSchema(BaseModel):
             )
 
 
+# Gleaning is limited to one round per operator in the search.
+MAX_GLEANING_ROUNDS = 1
+
+
 class GleaningInstantiateSchema(BaseModel):
     """
     Schema for gleaning operations in a data processing pipeline.
@@ -152,9 +156,16 @@ class GleaningInstantiateSchema(BaseModel):
         description="The prompt to evaluate and improve the output of the upstream operator.",
     )
     num_rounds: int = Field(
-        ..., description="The maximum number of refinement iterations."
+        default=MAX_GLEANING_ROUNDS,
+        description=f"The maximum number of refinement iterations. Capped at {MAX_GLEANING_ROUNDS}.",
     )
     model: str = Field(default="gemini-3.5-flash-lite", description="The LLM model to use.")
+
+    @field_validator("num_rounds")
+    @classmethod
+    def cap_num_rounds(cls, v: int) -> int:
+        """Gleaning runs at most MAX_GLEANING_ROUNDS rounds; larger requests are capped."""
+        return max(1, min(int(v), MAX_GLEANING_ROUNDS))
 
     @field_validator("validation_prompt")
     @classmethod
@@ -1021,30 +1032,59 @@ class ClarifyInstructionsInstantiateSchema(BaseModel):
         cls, clarified_prompt: str, original_prompt: str
     ) -> None:
         """
-        Validates that all input variables from the original prompt are preserved in the clarified prompt.
-        Only validates if the original prompt contains Jinja templates.
+        Validates that the clarified prompt reads every field the original prompt reads.
+        Covers fields read from `input` (map, filter) and fields read from loop items over
+        `inputs` (reduce); a reduce prompt must also keep its loop over `inputs`.
         """
-        # Extract all {{ input.xxx }} patterns from original prompt
-        original_vars = set(
-            re.findall(r"\{\{\s*input\.([^}\s]+)\s*\}\}", original_prompt)
-        )
-
-        # If original prompt has no input variables, skip validation (e.g., extract, rank operators)
-        if not original_vars:
-            return
-
-        # Extract all {{ input.xxx }} patterns from clarified prompt
-        clarified_vars = set(
-            re.findall(r"\{\{\s*input\.([^}\s]+)\s*\}\}", clarified_prompt)
-        )
-
-        # Check that all original variables are present in clarified prompt
-        missing_vars = original_vars - clarified_vars
-        if missing_vars:
+        original = _template_reads(original_prompt)
+        clarified = _template_reads(clarified_prompt)
+        problems = []
+        missing_input = original["input"] - clarified["input"]
+        if missing_input:
+            problems.append(f"input fields {sorted(missing_input)}")
+        if original["loops_inputs"] and not clarified["loops_inputs"]:
+            problems.append("the loop over `inputs` ({% for item in inputs %})")
+        missing_item = original["item"] - clarified["item"]
+        if missing_item:
+            problems.append(f"fields read from each item of `inputs` {sorted(missing_item)}")
+        if problems:
             raise ValueError(
-                f"Clarified prompt is missing input variables from original prompt: {sorted(missing_vars)}. "
-                f"Original variables: {sorted(original_vars)}, Clarified variables: {sorted(clarified_vars)}"
+                "Clarified prompt drops what the original prompt reads: " + "; ".join(problems)
+                + ". Keep every variable and loop of the original prompt."
             )
+
+
+def _template_reads(template: str) -> Dict[str, object]:
+    """Fields a Jinja prompt reads from `input` and from loop items over `inputs`.
+
+    Falls back to regular expressions when the template does not parse."""
+    import jinja2
+    from jinja2 import nodes
+
+    try:
+        ast = jinja2.Environment().parse(template or "")
+    except jinja2.TemplateSyntaxError:
+        return {
+            "input": set(re.findall(r"\binput\.(\w+)", template or "")),
+            "item": set(),
+            "loops_inputs": bool(re.search(r"\{%-?\s*for\s+\w+\s+in\s+inputs\b", template or "")),
+        }
+    loop_vars = {
+        n.target.name for n in ast.find_all(nodes.For)
+        if isinstance(n.iter, nodes.Name) and n.iter.name == "inputs" and isinstance(n.target, nodes.Name)
+    }
+    out = {"input": set(), "item": set(), "loops_inputs": bool(loop_vars)}
+    for n in ast.find_all((nodes.Getattr, nodes.Getitem)):
+        if not isinstance(n.node, nodes.Name):
+            continue
+        key = n.attr if isinstance(n, nodes.Getattr) else getattr(n.arg, "value", None)
+        if not isinstance(key, str):
+            continue
+        if n.node.name == "input":
+            out["input"].add(key)
+        elif n.node.name in loop_vars:
+            out["item"].add(key)
+    return out
 
 
 class SwapWithCodeInstantiateSchema(BaseModel):
@@ -1232,10 +1272,10 @@ class ArbitraryRewriteInstantiateSchema(BaseModel):
         ...,
         description="List of search/replace edits to apply to the pipeline JSON string. Applied in order, each operating on the result of the previous edit.",
     )
-    # overall_strategy: str = Field(
-    #     ...,
-    #     description="High-level explanation of the optimization strategy and expected improvements",
-    # )
+    decomposition: str = Field(
+        ...,
+        description="One sentence: which decomposition the edits apply (task, data, both or none) and why.",
+    )
 
 
 class JevRetrievalTargetSchema(BaseModel):

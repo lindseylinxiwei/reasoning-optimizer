@@ -1,5 +1,6 @@
 import json
 import os
+from docetl.reasoning_optimizer.effective_length import chunk_size_hint
 from copy import deepcopy
 from typing import Dict, List, Type
 
@@ -382,7 +383,7 @@ class DocumentChunkingTopKDirective(Directive):
             f"into a Split -> TopK -> Reduce pipeline for processing very long documents with intelligent chunk selection.\n"
             f"{'For Filter operations, a final code_filter step will be automatically added to return boolean results.' if op_type == 'filter' else ''}\n\n"
             f"Key requirements:\n"
-            f"1. chunk_size: Choose an appropriate token count (typically 10000-15000) for cost-effective processing of long documents\n"
+            f"1. chunk_size: {chunk_size_hint(original_op.get('model'), topk=True)}\n"
             f"2. split_key: Identify the document field to split from the original operation's prompt (the longest text field)\n"
             f"3. reduce_prompt: Use the EXACT SAME prompt as the original, with ONE change:\n"
             f"   - Where the original references '{{{{ input.<split_key> }}}}', replace it with:\n"
@@ -393,9 +394,8 @@ class DocumentChunkingTopKDirective(Directive):
             f"   - method: Choose 'embedding' for semantic similarity or 'fts' for keyword matching\n"
             f"     * Use 'embedding' when: looking for conceptual comparisons, themes, or abstract relationships\n"
             f"     * Use 'fts' when: searching for specific terms, legal clauses, technical codes, or exact phrases\n"
-            f"   - k: Number of chunks to retrieve (typically 5-10 for comprehensive coverage)\n"
-            f"     * For complex tasks needing most of the document as context: k=10\n"
-            f"     * For targeted extraction from specific sections: k=5\n"
+            f"   - k: Number of chunks to retrieve, chosen with chunk_size so that chunk_size * k stays within the limit in item 1\n"
+            f"     * More, smaller chunks cover more places in the document; fewer, larger chunks keep more surrounding context\n"
             f"   - query: Craft carefully to find chunks relevant to the {'filter decision' if op_type == 'filter' else 'extraction task'}\n"
             f"     * For embedding: use terms related to the comparison/decision criteria\n"
             f"     * For fts: use specific keywords that appear in relevant sections\n"
@@ -616,8 +616,10 @@ class DocumentChunkingTopKDirective(Directive):
             )
 
         # Instantiate the directive
+        # the chunk map runs on the operation's model; show it so the chunk-size hint uses it
+        shown_op = {**target_op_config, "model": target_op_config.get("model", global_default_model)}
         rewrite, message_history, call_cost = self.llm_instantiate(
-            operators, input_file_path, target_op_config, agent_llm, message_history
+            operators, input_file_path, shown_op, agent_llm, message_history
         )
 
         # Apply the rewrite to the operators

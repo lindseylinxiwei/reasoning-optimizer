@@ -259,14 +259,18 @@ def kept_chars(technique: str, config: BaseModel, doc_chars: int) -> float:
     return min(doc_chars, kept)
 
 
-def check_view(technique: str, config: BaseModel, doc_lengths: List[int]) -> dict:
-    """Reject a view that keeps too much of the median document; return its kept shares."""
+def check_view(technique: str, config: BaseModel, doc_lengths: List[int],
+               max_share: float = MAX_KEPT_SHARE, min_share: float = 0.0) -> dict:
+    """Reject a view that keeps too much (or, if min_share is set, too little) of the median document."""
     shares = [kept_chars(technique, config, n) / max(1, n) for n in doc_lengths]
     result = {"kept_share_median": round(median(shares), 4),
               "kept_chars_median": int(median(kept_chars(technique, config, n) for n in doc_lengths))}
-    if result["kept_share_median"] > MAX_KEPT_SHARE:
+    if result["kept_share_median"] > max_share:
         raise ValueError(f"keeps {result['kept_share_median']:.0%} of the median document "
-                         f"(limit {MAX_KEPT_SHARE:.0%}); it would not reduce the text much")
+                         f"(limit {max_share:.0%}); it would not reduce the text much")
+    if result["kept_share_median"] < min_share:
+        raise ValueError(f"keeps only {result['kept_share_median']:.0%} of the median document "
+                         f"(minimum {min_share:.0%}); too little for this pipeline")
     return result
 
 
@@ -284,7 +288,8 @@ TECHNIQUE_TEXT = {
 }
 
 
-def proposal_prompt(technique: str, ops: List[dict], profile: dict, extra: str = "") -> str:
+def proposal_prompt(technique: str, ops: List[dict], profile: dict, extra: str = "",
+                    max_share: float = MAX_KEPT_SHARE, level_guidance: Optional[str] = None) -> str:
     llm_ops = [{k: op[k] for k in ("name", "type", "prompt", "output") if k in op}
                for op in ops if op.get("type") in ("map", "filter", "reduce")]
     lengths = profile.get("chars", {})
@@ -300,9 +305,10 @@ def proposal_prompt(technique: str, ops: List[dict], profile: dict, extra: str =
         f"in one dimension only: how much text is kept. Give a rationale for EACH fixed parameter that refers to "
         f"the numbers in the profile (document and section lengths, heading counts) and to what the operators "
         f"need.\n"
-        f"- {LEVELS} levels of the main dimension, increasing and roughly doubling, from very small (cheapest, "
-        f"e.g. around 500 tokens or the smallest useful amount) to generous. Explain in levels_rationale how "
-        f"you chose the range.\n"
-        f"- Every level must keep at most {MAX_KEPT_SHARE:.0%} of the median document, otherwise it does not "
+        f"- {LEVELS} levels of the main dimension, "
+        + (level_guidance or "increasing and roughly doubling, from very small (cheapest, e.g. around 500 tokens "
+           "or the smallest useful amount) to generous")
+        + f". Explain in levels_rationale how you chose the range.\n"
+        f"- Every level must keep at most {max_share:.0%} of the median document, otherwise it does not "
         f"reduce the text.\n"
     )

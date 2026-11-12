@@ -40,7 +40,7 @@ class GleaningDirective(Directive):
             Example InstantiateSchema (what the agent should output):
             {
               "validation_prompt": "There should be at least 2 insights, and each insight should have at least 1 supporting action.",
-              "num_rounds": 2,
+              "num_rounds": 1,
               "model": "gemini-3.5-flash-lite"
             }
         """,
