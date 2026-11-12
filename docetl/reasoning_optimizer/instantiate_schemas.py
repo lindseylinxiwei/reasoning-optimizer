@@ -1400,3 +1400,60 @@ class PresenceGateInstantiateSchema(BaseModel):
         if not 2000 <= self.chunk_chars <= 24000:
             raise ValueError("chunk_chars must be in [2000, 24000]")
         return self
+
+
+# ---- jev_classify ---------------------------------------------------------------------------
+
+# Jev reads at most 32K tokens per request and never truncates: an overlong request fails.
+JEV_CONTEXT_TOKENS = 32_000
+JEV_MAX_PROMPT_TOKENS = 2_000
+
+
+class JevClassifyInstantiateSchema(BaseModel):
+    """Run one filter or map with the Jev classifier instead of an LLM: model becomes jev, the
+    prompt is replaced with one written for Jev, options Jev does not support are removed. The
+    output schema and the rest of the pipeline are unchanged."""
+
+    prompt: str = Field(
+        ..., description="The Jinja prompt Jev reads as its state: task instructions, one 'Output field "
+        "<name>:' section per output field, and the input field(s) the original prompt reads")
+    rationale: str = Field(..., description="One or two sentences: why a classifier fits this operation, and "
+                           "why the text it reads fits in Jev's context")
+
+    def check_against(self, op: Dict) -> None:
+        """Raise ValueError if this rewrite cannot run on op (fed back to the agent)."""
+        from jinja2 import Environment
+        import tiktoken
+
+        schema = (op.get("output") or {}).get("schema") or {}
+        for field, kind in schema.items():
+            kind = str(kind).strip()
+            if kind not in ("bool", "boolean") and not re.fullmatch(r"enum\[.*\]", kind):
+                raise ValueError(f"Jev only answers boolean and enum fields; output field {field!r} is {kind!r}")
+        old_reads, new_reads = _input_fields(op.get("prompt", "")), _input_fields(self.prompt)
+        if not new_reads:
+            raise ValueError(f"The prompt must include the input it classifies (the original reads {sorted(old_reads)})")
+        extra = new_reads - old_reads
+        if extra:
+            raise ValueError(f"The prompt reads fields the original prompt does not: {sorted(extra)}")
+        Environment().parse(self.prompt)
+        lowered = self.prompt.lower()
+        for field, kind in schema.items():
+            if f"output field {field}".lower() not in lowered:
+                raise ValueError(f"The prompt needs an 'Output field {field}:' section; Jev's question for "
+                                 f"this field refers to it by that name")
+            kind = str(kind).strip()
+            if kind.startswith("enum["):
+                labels = [l.strip() for l in kind[5:-1].split(",")]
+                missing = [l for l in labels if l.lower() not in lowered]
+                if missing:
+                    raise ValueError(f"The prompt must describe every label of {field!r}; missing {missing}")
+        prompt_tokens = len(tiktoken.get_encoding("cl100k_base").encode(self.prompt, disallowed_special=()))
+        if prompt_tokens > JEV_MAX_PROMPT_TOKENS:
+            raise ValueError(f"The prompt without the document is {prompt_tokens} tokens; keep it under "
+                             f"{JEV_MAX_PROMPT_TOKENS}, it shares Jev's context with the document")
+
+
+def _input_fields(template: str) -> set:
+    return set(re.findall(r"input\.([A-Za-z_][A-Za-z0-9_]*)", template or "")) | set(
+        re.findall(r"input\[['\"]([^'\"]+)['\"]\]", template or ""))

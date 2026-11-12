@@ -38,6 +38,8 @@ from .chunk_header_summary import ChunkHeaderSummaryDirective
 from .take_head_tail import TakeHeadTailDirective
 from .jev_retrieval import JevRetrievalDirective
 from .presence_gate import PresenceGateDirective
+from .jev_classify import JevClassifyDirective
+from .jev_fusion import JevFusionDirective
 from .clarify_instructions import ClarifyInstructionsDirective
 from .swap_with_code import SwapWithCodeDirective
 from .map_reduce_fusion import MapReduceFusionDirective
@@ -69,6 +71,8 @@ ALL_DIRECTIVES = [
     ArbitraryRewriteDirective(),
     JevRetrievalDirective(),
     PresenceGateDirective(),
+    JevClassifyDirective(),
+    JevFusionDirective(),
 ]
 
 ALL_COST_DIRECTIVES = [
@@ -84,6 +88,8 @@ ALL_COST_DIRECTIVES = [
     ArbitraryRewriteDirective(),
     JevRetrievalDirective(),
     PresenceGateDirective(),
+    JevClassifyDirective(),
+    JevFusionDirective(),
 ]
 
 DIRECTIVE_GROUPS = {
@@ -195,6 +201,8 @@ __all__ = [
     "TakeHeadTailDirective",
     "JevRetrievalDirective",
     "PresenceGateDirective",
+    "JevClassifyDirective",
+    "JevFusionDirective",
     "ClarifyInstructionsDirective",
     "SwapWithCodeDirective",
     "MapReduceFusionDirective",
