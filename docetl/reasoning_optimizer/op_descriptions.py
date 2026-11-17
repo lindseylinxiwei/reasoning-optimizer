@@ -645,6 +645,41 @@ op_jev_retrieve = Operator(
 )
 
 
+op_jev_chunk_retrieve = Operator(
+    name="JevChunkRetrieve",
+    type_llm_or_not="LLM-powered (Jev classifier, no text generation)",
+    description="""Keeps the chunks of a long text field that Jev scores highest for named targets, and writes them (literal source text, in document order, separated by [...]) to a new field that downstream operators read instead of the full text.
+
+    How it works: each document is cut into fixed chunks of chunk_tokens tokens (default 500). Jev is a classifier that only answers scored yes/no questions. One Jev request shows a run of consecutive chunks (up to ~28 KB and 32 questions) plus one neighbouring chunk on each side as context, and asks one question per (chunk, target): "does chunk Cn contain evidence for target Tk?", scored 0-1. Every chunk is scored once (no threshold, no navigation); a chunk's score is its best score over the targets. The best-scored chunks are kept, as many as `share` of the document holds (at least one); ties go to the chunk whose neighbour scores higher, then to document order.
+
+    Cost: Jev charges for input tokens only (about $0.042 per million), and every chunk is read once, so scoring costs about the document's length in tokens x $0.04 per million (more when many targets shrink the chunks per request). A document the budget covers entirely passes through with no calls.""",
+    when_to_use="Use before an LLM operation over long documents when the evidence it needs is sparse (a small part of each document, in one or a few places) but its position differs from document to document, so a fixed head/tail window cannot capture it (e.g. an emissions table, a particular contract clause). Do not use when the answer depends on content spread across the whole document, or when the evidence sits at a fixed position such as the title page (keeping the head is cheaper).",
+    required_parameters="""
+    name: Unique name for the operation
+    type: Must be "jev_chunk_retrieve"
+    text_key: Field containing the long text
+    targets: List of 1-32 {name, description}. Each description defines the evidence to find, not the answer. Usually one target.
+    share: Share of each document to keep, e.g. 0.05 for 5% (0 < share <= 1)
+    """,
+    optional_parameters="""
+    output_key: Field to write the chunks to (default "<text_key>_jev")
+    max_chars: Cap on kept characters per document (default none)
+    chunk_tokens: Chunk size in tokens (default 500)
+    max_request_bytes: Request size limit (default 28000)
+    """,
+    returns="The input documents with output_key added (kept chunks) and a diagnostics field _<name>_retrieval (chunks, kept chunks, requests, scores)",
+    minimal_example_configuration="""
+    name: retrieve_emissions_evidence
+    type: jev_chunk_retrieve
+    text_key: tot_text_raw
+    targets:
+      - name: scope_1_2_emissions
+        description: Passages or tables reporting total Scope 1 and Scope 2 greenhouse gas emissions, with values, units and years.
+    share: 0.05
+    """,
+)
+
+
 op_presence_check = Operator(
     name="PresenceCheck",
     type_llm_or_not="LLM-powered (Jev classifier, no text generation)",
@@ -699,6 +734,7 @@ ALL_OPERATORS = [
     op_code_filter,
     op_topk,
     op_jev_retrieve,
+    op_jev_chunk_retrieve,
     op_presence_check,
 ]
 

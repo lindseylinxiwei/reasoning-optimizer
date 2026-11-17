@@ -1,4 +1,6 @@
-"""Offline tests for the jev_retrieve operator and the jev_retrieval directive (no network)."""
+"""Offline tests for the jev_retrieve operator and the jev_region_retrieval ghost directive (no network).
+
+The registered jev_retrieval rewrite (Jev on chunks) is tested in test_jev_chunk_retrieve.py."""
 import json
 import re
 
@@ -102,12 +104,12 @@ def test_target_validation():
         JevRetrieveOperation.schema(**base, targets=[{"name": "a", "description": "x"}] * 2)
 
 
-# ---- jev_retrieval directive --------------------------------------------------------------
+# ---- jev_region_retrieval directive (ghost: not registered in the search) -------------------
 
 import yaml  # noqa: E402
 
-from docetl.reasoning_optimizer.directives import JevRetrievalDirective  # noqa: E402
-from docetl.reasoning_optimizer.instantiate_schemas import JevRetrievalInstantiateSchema  # noqa: E402
+from docetl.reasoning_optimizer.directives.jev_region_retrieval import JevRegionRetrievalDirective  # noqa: E402
+from docetl.reasoning_optimizer.instantiate_schemas import JevRegionRetrievalInstantiateSchema  # noqa: E402
 
 SUSTAINABILITY = "experiments/reasoning/pipelines/sustainability.yaml"
 
@@ -116,12 +118,18 @@ def rewrite(**kw):
     base = {"name": "retrieve_business", "document_key": "tot_text_raw",
             "targets": [{"name": "business", "description": "Passages describing what the company does."}],
             "evidence_chars": 4000}
-    return JevRetrievalInstantiateSchema(**{**base, **kw})
+    return JevRegionRetrievalInstantiateSchema(**{**base, **kw})
+
+
+def test_ghost_is_not_registered_in_the_search():
+    from docetl.reasoning_optimizer.directives import ALL_COST_DIRECTIVES, ALL_DIRECTIVES, DIRECTIVE_REGISTRY
+    assert "jev_region_retrieval" not in DIRECTIVE_REGISTRY
+    assert all(d.name != "jev_region_retrieval" for d in ALL_DIRECTIVES + ALL_COST_DIRECTIVES)
 
 
 def test_directive_rewires_only_the_target_operation():
     ops = yaml.safe_load(open(SUSTAINABILITY))["operations"]
-    new = JevRetrievalDirective().apply(ops, "determine_economic_activity", rewrite())
+    new = JevRegionRetrievalDirective().apply(ops, "determine_economic_activity", rewrite())
     names = [o["name"] for o in new]
     assert names.index("retrieve_business") == names.index("determine_economic_activity") - 1
     retrieve = new[names.index("retrieve_business")]
@@ -136,7 +144,7 @@ def test_directive_rewires_only_the_target_operation():
 
 def test_directive_handles_loop_variables_in_reduce_prompts():
     ops = yaml.safe_load(open(SUSTAINABILITY))["operations"]
-    new = JevRetrievalDirective().apply(ops, "sustainability_summary", rewrite())
+    new = JevRegionRetrievalDirective().apply(ops, "sustainability_summary", rewrite())
     prompt = {o["name"]: o for o in new}["sustainability_summary"]["prompt"]
     assert "item.tot_text_raw_jev_sustainability_summary" in prompt and "item.tot_text_raw }}" not in prompt
 
@@ -144,12 +152,12 @@ def test_directive_handles_loop_variables_in_reduce_prompts():
 def test_directive_rejects_a_field_the_prompt_does_not_read():
     ops = yaml.safe_load(open(SUSTAINABILITY))["operations"]
     with pytest.raises(ValueError, match="does not reference"):
-        JevRetrievalDirective().apply(ops, "determine_economic_activity", rewrite(document_key="missing"))
+        JevRegionRetrievalDirective().apply(ops, "determine_economic_activity", rewrite(document_key="missing"))
 
 
 def test_directive_instantiate_two_calls(tmp_path, monkeypatch):
     """Call 1 designs the index from the corpus profile; call 2 configures retrieval."""
-    import docetl.reasoning_optimizer.directives.jev_retrieval as module
+    import docetl.reasoning_optimizer.directives.jev_region_retrieval as module
     from docetl.reasoning_optimizer.instantiate_schemas import JevIndexDesignSchema
 
     body = "\n".join("Body text sentence number one continues here." for _ in range(30))
@@ -174,7 +182,7 @@ def test_directive_instantiate_two_calls(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "agent_completion", fake_agent)
     config = yaml.safe_load(open(SUSTAINABILITY))
-    new_ops, history, cost = JevRetrievalDirective().instantiate(
+    new_ops, history, cost = JevRegionRetrievalDirective().instantiate(
         operators=config["operations"], target_ops=["determine_economic_activity"],
         agent_llm="gpt-4.1", message_history=[], input_file_path=str(data))
     assert len(prompts) == 2 and cost == pytest.approx(0.003)
@@ -193,7 +201,7 @@ def test_directive_instantiate_two_calls(tmp_path, monkeypatch):
 
 def test_index_design_is_checked_and_retried(tmp_path, monkeypatch):
     """A heading pattern that matches nothing is sent back to the agent."""
-    import docetl.reasoning_optimizer.directives.jev_retrieval as module
+    import docetl.reasoning_optimizer.directives.jev_region_retrieval as module
     from docetl.reasoning_optimizer.instantiate_schemas import JevIndexDesignSchema
 
     data = tmp_path / "in.json"
@@ -214,7 +222,7 @@ def test_index_design_is_checked_and_retried(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "agent_completion", fake_agent)
     ops = yaml.safe_load(open(SUSTAINABILITY))["operations"]
-    new_ops, _, _ = JevRetrievalDirective().instantiate(
+    new_ops, _, _ = JevRegionRetrievalDirective().instantiate(
         operators=ops, target_ops=["determine_economic_activity"], agent_llm="m",
         message_history=[], input_file_path=str(data))
     assert any("matches no line" in f for f in feedback)
@@ -279,7 +287,7 @@ def test_operator_with_designed_index_and_regions_per_request(tmp_path, jev_call
 def test_index_check_rejects_a_pattern_matching_ordinary_text():
     spec = IndexSpec(levels=[{"kind": "heading", "pattern": r"\w"}])
     with pytest.raises(ValueError, match="limit 5%"):
-        JevRetrievalDirective.check_index(spec, [long_doc()])
+        JevRegionRetrievalDirective.check_index(spec, [long_doc()])
 
 
 def test_targets_are_bundled_to_fit_the_question_limit(tmp_path, monkeypatch):

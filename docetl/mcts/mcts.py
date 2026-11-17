@@ -28,7 +28,7 @@ from docetl.reasoning_optimizer.directives.jev_classify import is_jev_op, jev_co
 from docetl.reasoning_optimizer.directives.agent_utils import track_agent_cost
 from .tree_log import render_tree
 from docetl.reasoning_optimizer.directives.jev_fusion import JevFusionDirective
-from .jev_fit import JEV_FIT_TOKENS, SHORTENING_FOR_JEV, fits_jev
+from .jev_fit import JEV_FIT_TOKENS, SHORTENING_FOR_JEV, cap_chunk_retrieval, fits_jev
 from docetl.reasoning_optimizer.directives.change_model_cost import (
     ChangeModelCostDirective,
     create_model_specific_directives,
@@ -2002,8 +2002,9 @@ class MCTS:
               f"spent ${self.total_search_cost:.2f}")
 
     def _instantiate_child(self, node, directive, target_op_list, optimize_goal, messages, message_condensed,
-                           message_length, input_file_path, orig_default_model, extra=None) -> Node:
-        """One instantiation of directive on node (no grid fan-out), with every agent call charged."""
+                           message_length, input_file_path, orig_default_model, extra=None, post=None) -> Node:
+        """One instantiation of directive on node (no grid fan-out), with every agent call charged.
+        post: optional function applied to the new operator list before the child is created."""
         inst_messages = messages.copy() + ([{"role": "user", "content": extra}] if extra else [])
         cost = 0.0
         new_ops_list = None
@@ -2020,6 +2021,8 @@ class MCTS:
                     self._add_cost("agent", cost)
         if new_ops_list is None:
             raise ValueError("no ops list returned")
+        if post is not None:
+            new_ops_list = post(new_ops_list)
         bad_models = disallowed_models(new_ops_list)
         if bad_models:
             raise ValueError(f"the rewrite uses models outside the allowed list: {bad_models}")
@@ -2049,8 +2052,9 @@ class MCTS:
             f"rewrite; this iteration applies that rewrite first and then the Jev switch on top of it.\n\n"
             "Choose the shortening rewrite (it must leave the evidence the decision needs):\n"
             + "\n".join(f"- {d.to_string_for_plan()}" for d in options)
-            + "\n\nNotes: take_head_tail keeps the start (and end) of the document; jev_retrieval keeps passages "
-            "relevant to the task; doc_summarization replaces the document with a summary; doc_chunking (maps "
+            + "\n\nNotes: take_head_tail keeps the start (and end) of the document; jev_retrieval keeps the "
+            "500-token chunks Jev scores highest for the evidence (here its kept text is capped so the input fits "
+            "Jev's context); doc_summarization replaces the document with a summary; doc_chunking (maps "
             "only) runs the map per chunk, and Jev is then applied to the per-chunk map, so use no 'middle' "
             "peripheral section (it would add every earlier chunk to each call).\n"
             f"Answer with the directive name, one of {names}, and a one-sentence reason."
@@ -2082,8 +2086,10 @@ class MCTS:
         spec = GRIDS.get(choice.name)
         if spec is not None and spec.sized:
             extra = _param_grid.corpus_stats_text() + "\n\nThe shortened input must fit in Jev's 32K-token context (prompt included)."
+        # jev_retrieval keeps a share of the document, which has no fixed bound: cap it to fit Jev's budget.
+        post = (lambda ops: cap_chunk_retrieval(ops, op)) if choice.name == "jev_retrieval" else None
         shortened = self._instantiate_child(node, choice, [op], optimize_goal, msgs, message_condensed,
-                                            message_length, input_file_path, orig_default_model, extra)
+                                            message_length, input_file_path, orig_default_model, extra, post=post)
         shortened.coupled = True
         children = [shortened]
 

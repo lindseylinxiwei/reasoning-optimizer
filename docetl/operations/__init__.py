@@ -19,11 +19,13 @@ from docetl.operations.extract import ExtractOperation
 from docetl.operations.topk import TopKOperation
 
 from docetl.operations.jev_retrieve import JevRetrieveOperation
+from docetl.operations.jev_chunk_retrieve import JevChunkRetrieveOperation
 from docetl.operations.presence_check import PresenceCheckOperation
 from docetl.operations.gated_map import GatedMapOperation
 
 mapping = {
     "jev_retrieve": JevRetrieveOperation,
+    "jev_chunk_retrieve": JevChunkRetrieveOperation,
     "presence_check": PresenceCheckOperation,
     "gated_map": GatedMapOperation,
     "cluster": ClusterOperation,

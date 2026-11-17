@@ -9,7 +9,9 @@ Techniques:
   head_tail      first/last N tokens (code_map)
   topk           split -> topk (fts or embedding) per document -> code_reduce that joins the
                  retrieved chunks in document order
-  jev            jev_retrieve with output_key = text_key (structural index, no embeddings)
+  jev            jev_chunk_retrieve with output_key = text_key (Jev scores every 500-token chunk; keep a share)
+  jev_region     jev_retrieve with output_key = text_key (region-tree navigation; used by the unregistered
+                 jev_region_retrieval ghost rewrite only)
   summarization  LLM map that rewrites the text field as a summary
 """
 import json
@@ -62,6 +64,19 @@ class TopKView(BaseModel):
 class JevView(BaseModel):
     rationale: str
     targets: List[JevRetrievalTargetSchema]
+    share: float = Field(..., description="Share of each document kept, e.g. 0.05")
+
+    @field_validator("share")
+    @classmethod
+    def share_ok(cls, v):
+        if not 0 < v <= 1:
+            raise ValueError("share must be in (0, 1]")
+        return v
+
+
+class JevRegionView(BaseModel):
+    rationale: str
+    targets: List[JevRetrievalTargetSchema]
     evidence_chars: int
     policy: str = "preserve_fill"
     max_decisions: int = 64
@@ -74,7 +89,8 @@ class SummaryView(BaseModel):
     focus: str = Field(..., description="What the summary must preserve for the downstream operators")
 
 
-VIEW_TYPES = {"head_tail": HeadTailView, "topk": TopKView, "jev": JevView, "summarization": SummaryView}
+VIEW_TYPES = {"head_tail": HeadTailView, "topk": TopKView, "jev": JevView, "jev_region": JevRegionView,
+              "summarization": SummaryView}
 
 
 # ---- sweeps: what the agent proposes ------------------------------------------------------
@@ -140,6 +156,24 @@ class TopKSweep(BaseModel):
 class JevSweep(BaseModel):
     targets: List[JevRetrievalTargetSchema] = Field(..., description="Evidence targets, fixed across levels")
     targets_rationale: str
+    share_levels: List[float] = Field(..., description=f"{LEVELS} shares of each document to keep, increasing")
+    levels_rationale: str
+
+    @field_validator("share_levels")
+    @classmethod
+    def levels_ok(cls, v):
+        if any(not 0 < x <= 1 for x in v):
+            raise ValueError("shares must be in (0, 1]")
+        return _check_levels(v)
+
+    def configs(self):
+        return {f"jev_{i}": JevView(rationale=self.levels_rationale, targets=self.targets, share=x)
+                for i, x in enumerate(self.share_levels, 1)}
+
+
+class JevRegionSweep(BaseModel):
+    targets: List[JevRetrievalTargetSchema] = Field(..., description="Evidence targets, fixed across levels")
+    targets_rationale: str
     regions_per_request: int = Field(..., description="1-8, fixed across levels")
     regions_rationale: str
     cap_levels: List[int] = Field(..., description=f"{LEVELS} evidence_chars caps per target, increasing")
@@ -160,10 +194,10 @@ class JevSweep(BaseModel):
 
     def configs(self):
         base = dict(rationale=self.levels_rationale, targets=self.targets, regions_per_request=self.regions_per_request)
-        out = {f"jev_{i}": JevView(**base, evidence_chars=c, max_decisions=d, policy="preserve_fill")
+        out = {f"jev_{i}": JevRegionView(**base, evidence_chars=c, max_decisions=d, policy="preserve_fill")
                for i, (c, d) in enumerate(zip(self.cap_levels, self.decision_levels), 1)}
         mid = LEVELS // 2
-        out["jev_3_adaptive"] = JevView(**{**base, "rationale": "Level 3 with policy=adaptive"},
+        out["jev_3_adaptive"] = JevRegionView(**{**base, "rationale": "Level 3 with policy=adaptive"},
                                         evidence_chars=self.cap_levels[mid], max_decisions=self.decision_levels[mid],
                                         policy="adaptive")
         return out
@@ -185,7 +219,8 @@ class SummarySweep(BaseModel):
                 for i, w in enumerate(self.word_levels, 1)}
 
 
-SWEEP_TYPES = {"head_tail": HeadTailSweep, "topk": TopKSweep, "jev": JevSweep, "summarization": SummarySweep}
+SWEEP_TYPES = {"head_tail": HeadTailSweep, "topk": TopKSweep, "jev": JevSweep, "jev_region": JevRegionSweep,
+               "summarization": SummarySweep}
 
 
 def _head_tail_code(text_key, head, tail):
@@ -232,6 +267,9 @@ def view_ops(technique: str, config: BaseModel, text_key: str, model: str,
              "code": _JOIN_CODE.format(split=split, text_key=text_key)},
         ]
     if technique == "jev":
+        return [{"name": f"{prefix}_jev", "type": "jev_chunk_retrieve", "text_key": text_key, "output_key": text_key,
+                 "targets": [t.model_dump() for t in config.targets], "share": config.share, "chunk_tokens": 500}]
+    if technique == "jev_region":
         return [{"name": f"{prefix}_jev", "type": "jev_retrieve", "text_key": text_key, "output_key": text_key,
                  "targets": [t.model_dump() for t in config.targets], "evidence_chars": config.evidence_chars,
                  "policy": config.policy, "max_decisions": config.max_decisions,
@@ -253,6 +291,8 @@ def kept_chars(technique: str, config: BaseModel, doc_chars: int) -> float:
     elif technique == "topk":
         kept = config.chunk_tokens * config.k * CHARS_PER_TOKEN
     elif technique == "jev":
+        kept = config.share * doc_chars
+    elif technique == "jev_region":
         kept = config.evidence_chars * len(config.targets)
     else:
         kept = config.summary_words * 6.5
@@ -281,8 +321,11 @@ TECHNIQUE_TEXT = {
              "gemini-embedding-001, about $0.15 per million tokens embedded), and join them in document order. "
              "Kept text is about chunk_tokens x k tokens per document. Smaller chunks localize evidence better "
              "but lose surrounding context; the query should describe the evidence, not the answer."),
-    "jev": ("Jev (a cheap classifier) navigates an index of each document and keeps passages that score as "
-            "matching named evidence targets, up to evidence_chars characters per target."),
+    "jev": ("Jev (a cheap classifier) scores every 500-token chunk of each document for named evidence targets "
+            "(neighbouring chunks shown as context) and keeps the best-scored chunks, up to `share` of the "
+            "document, in document order."),
+    "jev_region": ("Jev (a cheap classifier) navigates an index of each document and keeps passages that score as "
+                   "matching named evidence targets, up to evidence_chars characters per target."),
     "summarization": ("An LLM (gemini-3.5-flash-lite) reads each full document once and writes a summary of "
                       "about summary_words words that replaces the text. Costs one full read per document."),
 }

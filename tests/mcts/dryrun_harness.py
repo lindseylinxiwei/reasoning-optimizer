@@ -150,9 +150,9 @@ def install_stubs(crash_at_simulation: int | None = None):
 
     def jev_instantiate(self, operators, target_ops, agent_llm, message_history=[], **kw):
         rw = JevRetrievalInstantiateSchema(
-            name="jev_business", document_key="tot_text_raw", evidence_chars=10000,
+            name="jev_business", document_key="tot_text_raw", share=0.05,
             targets=[JevRetrievalTargetSchema(name="business", description="What the company does.")])
-        return self.apply(operators, target_ops[0], rw, None), message_history, 0.01
+        return self.apply(operators, target_ops[0], rw), message_history, 0.01
 
     def jev_classify_instantiate(self, operators, target_ops, agent_llm, message_history=[], **kw):
         from docetl.reasoning_optimizer.instantiate_schemas import JevClassifyInstantiateSchema

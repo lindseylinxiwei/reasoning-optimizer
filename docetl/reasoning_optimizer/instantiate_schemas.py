@@ -1287,10 +1287,48 @@ class JevRetrievalTargetSchema(BaseModel):
     )
 
 
+JEV_RETRIEVAL_SHARES = (0.025, 0.05, 0.1, 0.2)   # share-of-report ladder of the jev_retrieval rewrite
+
+
 class JevRetrievalInstantiateSchema(BaseModel):
     """
-    Schema for the jev_retrieval directive: insert a jev_retrieve operator before the target
-    operation and point the target's prompt at the retrieved passages.
+    Schema for the jev_retrieval directive (Jev on fixed chunks): insert a jev_chunk_retrieve operator before the
+    target operation and point the target's prompt at the kept chunks.
+    """
+
+    name: str = Field(..., description="The name of the jev_chunk_retrieve operator")
+    document_key: str = Field(
+        ..., description="The input field holding the long text the target operation reads"
+    )
+    targets: List[JevRetrievalTargetSchema] = Field(
+        ..., description="1-4 evidence targets; usually one, describing the evidence the operation needs"
+    )
+    share: float = Field(
+        ..., description="Share of each document to keep, one of 0.025, 0.05, 0.1, 0.2 (2.5% to 20%)"
+    )
+
+    @field_validator("targets")
+    @classmethod
+    def validate_targets(cls, v):
+        if not 1 <= len(v) <= 4:
+            raise ValueError("Provide between 1 and 4 evidence targets")
+        if len({t.name for t in v}) != len(v):
+            raise ValueError("Target names must be unique")
+        return v
+
+    @field_validator("share")
+    @classmethod
+    def validate_share(cls, v):
+        if not 0 < v <= 0.3:
+            raise ValueError("share must be above 0 and at most 0.3 (30% of the document)")
+        return v
+
+
+class JevRegionRetrievalInstantiateSchema(BaseModel):
+    """
+    Schema for the jev_region_retrieval directive (not registered in the search; kept for reference): insert a
+    jev_retrieve operator (region-tree navigation) before the target operation and point the target's prompt at
+    the retrieved passages.
     """
 
     name: str = Field(..., description="The name of the jev_retrieve operator")
@@ -1365,7 +1403,7 @@ class JevSplitterSchema(BaseModel):
 
 
 class JevIndexDesignSchema(BaseModel):
-    """First jev_retrieval call: how to split every document into a hierarchy of regions."""
+    """First jev_region_retrieval call: how to split every document into a hierarchy of regions."""
 
     rationale: str = Field(..., description="What structure the documents have and why this design fits it")
     levels: List[JevSplitterSchema] = Field(

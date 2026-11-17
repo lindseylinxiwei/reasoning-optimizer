@@ -176,10 +176,10 @@ GRIDS: Dict[str, ParamSpec] = {
             "doc_chunking_topk", "chunk_size*k", (1000, 2000, 4000, 8000, 16000),
             get=_topk_get, set=_topk_set, kept_tokens=lambda v: v,
         ),
-        ParamSpec(
-            "jev_retrieval", "evidence_chars", (4000, 8000, 16000, 32000, 64000),
-            get=lambda rw: int(rw.evidence_chars), set=_copy_set("evidence_chars"),
-            kept_tokens=lambda v: v / CHARS_PER_TOKEN,
+        ParamSpec(   # Jev on fixed chunks: share of each document kept (no fixed-token budgets)
+            "jev_retrieval", "share", (0.025, 0.05, 0.1, 0.2),
+            get=lambda rw: float(rw.share), set=_copy_set("share"),
+            kept_tokens=lambda v: v * MEDIAN_DOC_TOKENS,
         ),
         ParamSpec(
             "doc_chunking", "chunk_size", (2000, 4000, 8000, 16000),

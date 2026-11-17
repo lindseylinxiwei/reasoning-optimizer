@@ -4,6 +4,7 @@ Walks the operations before the target and tracks an upper bound (tokens) for ev
 write. Raw dataset fields and anything not recognised are unbounded. Recognised writers:
   code_map from take_head_tail     (head_words + tail_words) words
   jev_retrieve                     evidence_chars characters
+  jev_chunk_retrieve               max_chars characters if set; a share of the document is unbounded
   LLM map / parallel_map           generated output fields
   split (token_count)              num_tokens per chunk
   gather without a 'middle'        chunk * (1 + peripheral head/tail chunks); a 'middle' section
@@ -13,6 +14,7 @@ The bound is conservative: words and characters are converted with margins.
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Dict, List, Optional, Tuple
 
 TOKENS_PER_WORD_SAFE = 1.6        # corpus average is 1.39 (cl100k); margin for number-heavy text
@@ -22,6 +24,8 @@ JEV_FIT_TOKENS = 28_000           # under Jev's 32K, margin for its own tokenize
 
 # Rewrites that can bring an operation's input under the limit while leaving a filter/map that
 # Jev can run on (doc_chunking_topk turns the map into a reduce; compression saves ~15%).
+# jev_retrieval keeps a share of each document, which has no fixed upper bound; when it is the shortening
+# rewrite, cap_chunk_retrieval gives its jev_chunk_retrieve a max_chars that fits the budget.
 SHORTENING_FOR_JEV = ("take_head_tail", "jev_retrieval", "doc_summarization", "doc_chunking")
 
 
@@ -62,6 +66,9 @@ def input_token_bound(ops: List[Dict], target: str) -> Tuple[Optional[int], str]
             writes = _code_map_writes(op)
         elif kind == "jev_retrieve" and op.get("output_key"):
             writes = {op["output_key"]: int(int(op.get("evidence_chars", 0)) / CHARS_PER_TOKEN_SAFE) or None}
+        elif kind == "jev_chunk_retrieve" and op.get("output_key"):
+            cap = op.get("max_chars")
+            writes = {op["output_key"]: int(int(cap) / CHARS_PER_TOKEN_SAFE) if cap else None}
         elif kind in ("map", "parallel_map"):
             schema = (op.get("output") or {}).get("schema") or {}
             writes = {f: LLM_FIELD_TOKENS for f in schema}
@@ -98,3 +105,32 @@ def input_token_bound(ops: List[Dict], target: str) -> Tuple[Optional[int], str]
 def fits_jev(ops: List[Dict], target: str) -> Tuple[bool, Optional[int], str]:
     bound, why = input_token_bound(ops, target)
     return (bound is not None and bound <= JEV_FIT_TOKENS), bound, why
+
+
+JEV_PROMPT_HEADROOM = 1_000      # the Jev switch rewrites the prompt (adds output labels) after the cap is set
+
+
+def cap_chunk_retrieval(ops: List[Dict], target: str, headroom: int = JEV_PROMPT_HEADROOM) -> List[Dict]:
+    """Give every uncapped jev_chunk_retrieve whose output the target reads a max_chars, so the target's input
+    fits Jev's budget: the room left after the prompt, the other fields it reads and `headroom` tokens for the
+    Jev switch's longer prompt, split evenly. Returns the ops unchanged when nothing is uncapped or another
+    field the target reads is unbounded (a cap cannot help)."""
+    ops = deepcopy(ops)
+    target_op = next((o for o in ops if o.get("name") == target), None)
+    if target_op is None:
+        return ops
+    read = set(_fields_read(target_op.get("prompt", "")))
+    uncapped = [o for o in ops if o.get("type") == "jev_chunk_retrieve" and o.get("output_key") in read
+                and not o.get("max_chars")]
+    if not uncapped:
+        return ops
+    for o in uncapped:
+        o["max_chars"] = 1              # counts as 0 tokens: measures everything else
+    bound, _ = input_token_bound(ops, target)
+    room = JEV_FIT_TOKENS - headroom - bound if bound is not None else 0
+    for o in uncapped:
+        if room > 0:
+            o["max_chars"] = int(room / len(uncapped) * CHARS_PER_TOKEN_SAFE)
+        else:
+            o.pop("max_chars")
+    return ops

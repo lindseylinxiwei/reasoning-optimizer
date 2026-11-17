@@ -5,7 +5,7 @@ import pytest
 
 import docetl.retrieval.jev_backend as jev_backend
 from docetl.reasoning_optimizer.data_views import (
-    HeadTailView, JevView, SummaryView, TopKView, check_view, view_ops,
+    HeadTailView, JevRegionView, JevView, SummaryView, TopKView, check_view, view_ops,
 )
 from docetl.runner import DSLRunner
 from tests.test_jev_retrieve import long_doc, scripted_jev
@@ -49,11 +49,25 @@ def test_topk_view_joins_retrieved_chunks_in_document_order(tmp_path):
 
 
 def test_jev_view_writes_back_to_the_text_field(tmp_path, monkeypatch):
+    """The jev view is Jev on chunks: it keeps a share of the document."""
+    from tests.test_jev_chunk_retrieve import scripted_jev as chunk_jev
+    calls = []
+    monkeypatch.setattr(jev_backend, "request_jev", chunk_jev(["manufacturer"], calls))
+    config = JevView(rationale="r", targets=[{"name": "business", "description": "What the company does."}],
+                     share=0.1)
+    ops = view_ops("jev", config, "text", MODEL)
+    assert ops[0]["type"] == "jev_chunk_retrieve"
+    text = long_doc()
+    out, _ = run_view(tmp_path, ops, [{"id": 1, "text": text}])
+    assert "leading manufacturer" in out[0]["text"] and len(out[0]["text"]) <= 0.1 * len(text) * 1.5
+
+
+def test_jev_region_view_writes_back_to_the_text_field(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(jev_backend, "request_jev", scripted_jev(["manufacturer"], calls))
-    config = JevView(rationale="r", targets=[{"name": "business", "description": "What the company does."}],
-                     evidence_chars=1500, max_decisions=32)
-    out, _ = run_view(tmp_path, view_ops("jev", config, "text", MODEL), [{"id": 1, "text": long_doc()}])
+    config = JevRegionView(rationale="r", targets=[{"name": "business", "description": "What the company does."}],
+                           evidence_chars=1500, max_decisions=32)
+    out, _ = run_view(tmp_path, view_ops("jev_region", config, "text", MODEL), [{"id": 1, "text": long_doc()}])
     assert "leading manufacturer" in out[0]["text"] and len(out[0]["text"]) <= 1500 + 50
 
 
@@ -72,18 +86,21 @@ def test_check_view_rejects_views_that_keep_too_much():
 
 
 def test_sweeps_expand_to_levels_plus_one_change_comparisons():
-    from docetl.reasoning_optimizer.data_views import JevSweep, TopKSweep
+    from docetl.reasoning_optimizer.data_views import JevRegionSweep, JevSweep, TopKSweep
     topk = TopKSweep(chunk_tokens=400, chunk_rationale="r", method="embedding", method_rationale="r", query="q",
                      query_rationale="r", k_levels=[1, 2, 4, 8, 16], levels_rationale="r").configs()
     assert len(topk) == 7
     mid, fts, half = topk["topk_3"], topk["topk_3_fts"], topk["topk_3_half_chunks"]
     assert (fts.method, fts.k, fts.chunk_tokens) == ("fts", mid.k, mid.chunk_tokens)          # one change: method
     assert half.chunk_tokens * half.k == mid.chunk_tokens * mid.k and half.method == mid.method  # same budget
-    jev = JevSweep(targets=[{"name": "a", "description": "b"}], targets_rationale="r", regions_per_request=4,
+    jev = JevRegionSweep(targets=[{"name": "a", "description": "b"}], targets_rationale="r", regions_per_request=4,
                    regions_rationale="r", cap_levels=[1000, 2000, 4000, 8000, 16000],
                    decision_levels=[16, 24, 32, 48, 64], levels_rationale="r").configs()
     assert jev["jev_3_adaptive"].policy == "adaptive" and jev["jev_3"].policy == "preserve_fill"
     assert jev["jev_3_adaptive"].evidence_chars == jev["jev_3"].evidence_chars
+    chunks = JevSweep(targets=[{"name": "a", "description": "b"}], targets_rationale="r",
+                      share_levels=[0.025, 0.05, 0.1, 0.2, 0.3], levels_rationale="r").configs()
+    assert [c.share for c in chunks.values()] == [0.025, 0.05, 0.1, 0.2, 0.3]
     with pytest.raises(Exception):
         TopKSweep(chunk_tokens=400, chunk_rationale="r", method="fts", method_rationale="r", query="q",
                   query_rationale="r", k_levels=[4, 2, 8, 16, 32], levels_rationale="r")
